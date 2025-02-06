@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
- / {
+/ {
 	feather_header: connector {
 		compatible = "adafruit-feather-header";
 		#gpio-cells = <2>;

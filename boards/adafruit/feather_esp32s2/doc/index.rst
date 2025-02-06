@@ -365,6 +365,7 @@ When in the ROM bootloader, you can upload code and query the chip using ``west 
 After the flashing you will receive most likely this Error:
 
 .. code-block:: console
+
    WARNING: ESP32-S2FNR2 (revision v0.0) chip was placed into download mode using GPIO0.
    esptool.py can not exit the download mode over USB. To run the app, reset the chip manually.
    To suppress this note, set --after option to 'no_reset'.
