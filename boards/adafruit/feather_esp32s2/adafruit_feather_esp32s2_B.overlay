@@ -4,15 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/dts-v1/;
-
-#include "adafruit_feather_esp32s2_common.dtsi"
-#include "feather_connector.dtsi"
-
 / {
-	model = "Adafruit Feather ESP32-S2 Rev B";
-	compatible = "adafruit,feather-esp32s2-revb";
-
 	/*
 	 * On-board transistor powers I2C pull-ups and external devices connected
 	 * via the STEMMA QT connector.

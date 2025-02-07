@@ -1,4 +1,4 @@
-identifier: adafruit_feather_esp32s2/tft/reverse
+identifier: adafruit_feather/esp32s2/tft_reverse
 name: Adafruit ESP32-S2 TFT Feather Reverse
 type: mcu
 arch: xtensa

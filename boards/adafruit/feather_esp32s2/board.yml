@@ -1,15 +1,15 @@
-board:
-  name: adafruit_feather_esp32s2
+boards:
+- name: adafruit_feather
   full_name: Adafruit Feather ESP32S2
   vendor: adafruit
   socs:
     - name: esp32s2
       variants:
-        - name: 'revb'
-        - name: 'revc'
-          variants:
-            - name: 'max17048'
-        - name: 'tft'
-          variants:
-            - name: 'max17048'
-            - name: 'reverse'
+      - name: 'tft'
+      - name: 'tft_reverse'
+  revision:
+    format: "letter"
+    default: "C"
+    revisions:
+      - name: "B"
+      - name: "C"

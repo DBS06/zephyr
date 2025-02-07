@@ -28,15 +28,12 @@ Hardware
 The following Adafruit ESP32-S2 Feather board variants are supported:
 
 - `Adafruit ESP32-S2 Feather`_:
-   - ``adafruit_feather/esp32s2/revb``
-   - ``adafruit_feather/esp32s2/revc``
-   - ``adafruit_feather/esp32s2/revc/max17048``
+   - ``adafruit_feather@B/esp32s2``
+   - ``adafruit_feather@C/esp32s2``
 - `Adafruit ESP32-S2 TFT Feather`_
-   - ``adafruit_feather/esp32s2/tft``
-   - ``adafruit_feather/esp32s2/tft/max17048``
+   - ``adafruit_feather_tft/esp32s2``
 - `Adafruit ESP32-S2 Reverse TFT Feather`_
-   - ``adafruit_feather/esp32s2/tft/reverse``
-
+   - ``adafruit_feather_tft/esp32s2/reverse``
 
 .. note::
 

@@ -9,10 +9,6 @@
 #include "adafruit_feather_esp32s2_common.dtsi"
 #include "feather_connector_tft.dtsi"
 
-/*
- * Note: Currently there is no driver for the LC709203F battery gauge.
- */
-
 / {
 	model = "Adafruit Feather ESP32-S2 TFT";
 	compatible = "adafruit,feather-esp32s2-tft";

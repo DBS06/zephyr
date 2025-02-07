@@ -10,8 +10,8 @@
 #include "feather_connector.dtsi"
 
 / {
-	model = "Adafruit Feather  ESP32-S2 TFT Reverse";
-	compatible = "adafruit,feather-esp32s2-tft-reverse";
+	model = "Adafruit Feather ESP32-S2 TFT Reverse";
+	compatible = "adafruit,feather_tft-reverse";
 
 	chosen {
 		zephyr,display = &st7789v_tft;
@@ -24,6 +24,7 @@
 	leds {
 		compatible = "gpio-leds";
 		status = "okay";
+
 		led1: led_1 {
 			label = "TFT Backlight";
 			gpios = <&gpio1 45 GPIO_ACTIVE_HIGH>;
@@ -33,6 +34,7 @@
 	gpio_keys {
 		compatible = "gpio-keys";
 		status = "okay";
+
 		d1_button: d1_button {
 			label = "D1 Button";
 			gpios = <&gpio0 1 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
@@ -66,6 +68,7 @@
 			compatible = "sitronix,st7789v";
 			status = "disabled";
 
+			/* Also powered by i2c_reg */
 			power-domains = <&i2c_reg>;
 
 			mipi-max-frequency = <DT_FREQ_M(20)>;
