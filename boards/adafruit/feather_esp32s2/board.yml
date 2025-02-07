@@ -1,5 +1,5 @@
 board:
-  name: adafruit_feather
+  name: adafruit_feather_esp32s2
   full_name: Adafruit Feather ESP32S2
   vendor: adafruit
   socs:
