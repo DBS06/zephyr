@@ -1,0 +1,23 @@
+identifier: adafruit_feather_tft/esp32s2
+name: Adafruit ESP32-S2 TFT Feather
+type: mcu
+arch: xtensa
+toolchain:
+  - zephyr
+supported:
+  - adc
+  - can
+  - counter
+  - dma
+  - entropy
+  - gpio
+  - i2c
+  - pwm
+  - rtc
+  - spi
+  - uart
+  - watchdog
+  - wifi
+vendor: adafruit
+testing:
+  default: true
