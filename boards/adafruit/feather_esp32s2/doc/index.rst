@@ -1,4 +1,4 @@
-.. zephyr:board:: adafruit_feather/esp32s2
+.. zephyr:board:: adafruit_feather
 
 Overview
 ********
@@ -50,11 +50,11 @@ The following Adafruit ESP32-S2 Feather board variants are supported:
    - For the MAX17048 a driver in zephyr exists and is supported.
    - For the LC709203 a driver does'nt exists yet and the fuel gauge for boards with this IC is
      not available.
-   - For the `Adafruit ESP32-S2 Feather`_ there are two different Revisions `rev B`` and `rev C`.
-     The `rev C` board has revised the power circuitry for the NeoPixel and I2C QT port. Instead of
-     a transistor the `rev C` has a LDO regulator. To enable the NeoPixel and I2C QT port on `rev B`
-     boards GPIO07 needs to be set to LOW and on `rev C` boards it needs to be set HIGH. This will
-     be done automatically via `board_late_init_hook()`.
+   - For the `Adafruit ESP32-S2 Feather`_ there are two different Revisions ``rev B`` and ``rev C``.
+     The ``rev C`` board has revised the power circuitry for the NeoPixel and I2C QT port. Instead of
+     a transistor the ``rev C`` has a LDO regulator. To enable the NeoPixel and I2C QT port on ``rev B``
+     boards GPIO07 needs to be set to LOW and on ``rev C`` boards it needs to be set HIGH. This will
+     be done automatically via ``board_late_init_hook()``.
 
 Supported Features
 ==================

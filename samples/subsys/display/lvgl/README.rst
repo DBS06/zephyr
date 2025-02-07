@@ -46,9 +46,6 @@ for corresponding connectors, for example:
 or a board with an integrated display:
 
 - :zephyr:board:`esp_wrover_kit`
-- :zephyr:board:`adafruit_feather_esp32s2_tft`
-- :zephyr:board:`adafruit_feather_esp32s2_tft_max17048`
-- :zephyr:board:`adafruit_feather_esp32s2_tft_reverse`
 
 or a simulated display environment in a :ref:`native_sim <native_sim>` application:
 
