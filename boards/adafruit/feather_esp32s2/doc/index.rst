@@ -515,7 +515,7 @@ Testing Wi-Fi
 There is a sample that allows to test the Wi-Fi on the board are working.
 
 .. note::
-   The :ref:`Prerequisites` must be met before testing Wi-Fi.
+   The Prerequisites must be met before testing Wi-Fi.
 
 .. tabs::
 
