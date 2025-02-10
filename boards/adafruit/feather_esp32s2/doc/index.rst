@@ -31,9 +31,9 @@ The following Adafruit ESP32-S2 Feather board variants are supported:
    - ``adafruit_feather@B/esp32s2`` Revision B
    - ``adafruit_feather@C/esp32s2`` Revision C
 - `Adafruit ESP32-S2 TFT Feather`_
-   - ``adafruit_feather/esp32s2/tft``
+   - ``adafruit_feather_tft/esp32s2``
 - `Adafruit ESP32-S2 Reverse TFT Feather`_
-   - ``adafruit_feather/esp32s2/tft_reverse``
+   - ``adafruit_feather_tft_reverse/esp32s2``
 
 .. note::
 
@@ -119,11 +119,9 @@ to retrieve those files.
 
 .. code-block:: console
 
+   west update
    west blobs fetch hal_espressif
 
-.. note::
-
-   It is recommended running the command above after :file:`west update`.
 
 Building & Flashing
 *******************
@@ -187,20 +185,20 @@ To build the sample application using sysbuild use the command:
          :west-args: --sysbuild
          :compact:
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: build
          :west-args: --sysbuild
          :compact:
 
-   .. group-tab:: adafruit_feather/esp32s2/tft_reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft_reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: build
          :west-args: --sysbuild
          :compact:
@@ -262,18 +260,18 @@ Build and flash applications as usual:
          :board: adafruit_feather@C/esp32s2
          :goals: build
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: build
 
-   .. group-tab:: adafruit_feather/esp32s2/tft_reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft_reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: build
 
 The usual ``flash`` target will work with the ``adafruit_feather/esp32s2/...`` board
@@ -299,18 +297,18 @@ When in the ROM bootloader, you can upload code and query the chip using ``west 
          :board: adafruit_feather@C/esp32s2
          :goals: flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft_reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft_reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: flash
 
 After the flashing you will receive most likely this Error:
@@ -369,18 +367,18 @@ the :zephyr:code-sample:`hello_world` application.
          :board: adafruit_feather@C/esp32s2
          :goals: debug
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: debug
 
-   .. group-tab:: adafruit_feather/esp32s2/tft_reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/hello_world
-         :board: adafruit_feather/esp32s2/tft_reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: debug
 
 
@@ -406,18 +404,18 @@ properly with Zephyr:
          :board: adafruit_feather@C/esp32s2
          :goals: build flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/basic/blinky
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: build flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft_reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/basic/blinky
-         :board: adafruit_feather/esp32s2/tft/reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: build flash
 
 Testing the NeoPixel
@@ -442,18 +440,18 @@ properly with Zephyr:
          :board: adafruit_feather@C/esp32s2
          :goals: build flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/drivers/led/led_strip
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: build flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft_reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/drivers/led/led_strip
-         :board: adafruit_feather/esp32s2/tft/reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: build flash
 
 Testing the TFT
@@ -464,18 +462,18 @@ properly with Zephyr:
 
 .. tabs::
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/subsys/display/lvgl
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: build flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft/reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/subsys/display/lvgl
-         :board: adafruit_feather/esp32s2/tft/reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: build flash
 
 Testing the Fuel Gauge (MAX17048)
@@ -497,18 +495,56 @@ on the board are working properly with Zephyr:
          :board: adafruit_feather@C/esp32s2
          :goals: build flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft
+   .. group-tab:: adafruit_feather_tft/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/fuel_gauge/max17048/
-         :board: adafruit_feather/esp32s2/tft
+         :board: adafruit_feather_tft/esp32s2
          :goals: build flash
 
-   .. group-tab:: adafruit_feather/esp32s2/tft/reverse
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
 
       .. zephyr-app-commands::
          :zephyr-app: samples/fuel_gauge/max17048/
-         :board: adafruit_feather/esp32s2/tft_reverse
+         :board: adafruit_feather_tft_reverse/esp32s2
+         :goals: build flash
+
+Testing Wi-Fi
+*************
+
+There is a sample that allows to test the Wi-Fi on the board are working.
+
+.. note::
+   The :ref:`Prerequisites` must be met before testing Wi-Fi.
+
+.. tabs::
+
+   .. group-tab:: adafruit_feather@B/esp32s2
+
+      .. zephyr-app-commands::
+         :zephyr-app: samples/net/wifi/shell
+         :board: adafruit_feather@B/esp32s2
+         :goals: build flash
+
+   .. group-tab:: adafruit_feather@C/esp32s2
+
+      .. zephyr-app-commands::
+         :zephyr-app: samples/net/wifi/shell
+         :board: adafruit_feather@C/esp32s2
+         :goals: build flash
+
+   .. group-tab:: adafruit_feather_tft/esp32s2
+
+      .. zephyr-app-commands::
+         :zephyr-app: samples/net/wifi/shell
+         :board: adafruit_feather_tft/esp32s2
+         :goals: build flash
+
+   .. group-tab:: adafruit_feather_tft_reverse/esp32s2
+
+      .. zephyr-app-commands::
+         :zephyr-app: samples/net/wifi/shell
+         :board: adafruit_feather_tft_reverse/esp32s2
          :goals: build flash
 
 References
