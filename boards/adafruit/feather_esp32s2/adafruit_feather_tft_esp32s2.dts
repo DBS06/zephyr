@@ -7,11 +7,11 @@
 /dts-v1/;
 
 #include "adafruit_feather_esp32s2_common.dtsi"
-#include "feather_connector.dtsi"
+#include "feather_connector_tft.dtsi"
 
 / {
-	model = "Adafruit Feather ESP32-S2 TFT Reverse";
-	compatible = "adafruit,feather_tft-reverse";
+	model = "Adafruit Feather ESP32-S2 TFT";
+	compatible = "espressif,esp32s2";
 
 	chosen {
 		zephyr,display = &st7789v_tft;
@@ -31,35 +31,22 @@
 		};
 	};
 
-	gpio_keys {
-		compatible = "gpio-keys";
-		status = "okay";
-
-		d1_button: d1_button {
-			label = "D1 Button";
-			gpios = <&gpio0 1 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
-			zephyr,code = <INPUT_KEY_1>;
-		};
-
-		d2_button: d2_button {
-			label = "D3 Button";
-			gpios = <&gpio0 2 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
-			zephyr,code = <INPUT_KEY_3>;
-		};
-	};
-
+	/*
+	 * On-board regulator powers I2C pull-ups and external devices connected
+	 * via the STEMMA QT connector.
+	 */
 	i2c_reg: i2c_reg {
-		label = "TFT I2C Power";
+		label = "I2C Power";
 		compatible = "power-domain-gpio";
 		#power-domain-cells = <0>;
-		enable-gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+		enable-gpios = <&gpio0 21 GPIO_ACTIVE_HIGH>;
 	};
 
 	mipi_dbi {
 		compatible = "zephyr,mipi-dbi-spi";
 		spi-dev = <&spi2>;
-		dc-gpios = <&gpio1 40 GPIO_ACTIVE_HIGH>;
-		reset-gpios = <&gpio1 41 GPIO_ACTIVE_LOW>;
+		dc-gpios = <&gpio1 39 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 40 GPIO_ACTIVE_LOW>;
 		write-only;
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -97,24 +84,33 @@
 	};
 };
 
-&pinctrl {
-	spim2_default: spim2_default {
-		group1 {
-			pinmux = <SPIM2_MISO_GPIO37>,
-				 <SPIM2_SCLK_GPIO36>,
-				 <SPIM2_CSEL_GPIO42>;
-		};
-		group2 {
-			pinmux = <SPIM2_MOSI_GPIO35>;
-			output-low;
-		};
+&gpio0 {
+	status = "okay";
+	neopixel-power-enable {
+		gpio-hog;
+		gpios = <34 GPIO_ACTIVE_HIGH>;
+		output-high;
 	};
 };
 
-&i2c0 {
-	max17048:max17048@36 {
-		compatible = "maxim,max17048";
-		status = "disabled";
-		reg = <0x36 >;
+&pinctrl {
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO1>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART1_RX_GPIO2>;
+			bias-pull-up;
+		};
+	};
+
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO42>,
+				 <I2C0_SCL_GPIO41>;
+			drive-open-drain;
+			output-high;
+		};
 	};
 };

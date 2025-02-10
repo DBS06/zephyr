@@ -6,6 +6,7 @@
 
 /dts-v1/;
 
+#include <espressif/esp32s2/esp32s2.dtsi>
 #include <espressif/esp32s2/esp32s2_wroom.dtsi>
 #include "adafruit_feather_esp32s2-pinctrl.dtsi"
 #include <espressif/partitions_0x1000_default.dtsi>

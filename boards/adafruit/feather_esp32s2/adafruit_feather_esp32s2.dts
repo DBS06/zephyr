@@ -11,5 +11,5 @@
 
 / {
 	model = "Adafruit Feather ESP32-S2";
-	compatible = "adafruit,feather-esp32s2";
+	compatible = "espressif,esp32s2";
 };
