@@ -5,19 +5,16 @@ arch: xtensa
 toolchain:
   - zephyr
 supported:
-  - adc
-  - can
-  - counter
-  - dma
-  - entropy
   - gpio
-  - i2c
-  - pwm
-  - rtc
-  - spi
   - uart
+  - i2c
+  - spi
+  - counter
   - watchdog
-  - wifi
+  - entropy
+  - pwm
+  - dma
+  - display
 vendor: adafruit
 testing:
   default: true
