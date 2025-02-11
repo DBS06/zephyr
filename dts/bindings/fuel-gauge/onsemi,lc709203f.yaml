@@ -1,0 +1,24 @@
+# Copyright (c) 2025 Philipp Steiner <philipp.steiner1987@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  ON Semiconductor LC709203F fuel gauge. For more info visit
+  https://www.onsemi.com/products/power-management/battery-management/battery-fuel-gauges/LC709204F
+
+compatible: "onsemi,lc709203f"
+
+include: [i2c-device.yaml, fuel-gauge.yaml]
+
+# properties:
+#   apa:
+#     type: string
+#     required: true
+#     description: adjustment value for a battery type to improve the RSOC precision.
+#       Typical values are provided and should be selected approximately.
+#     enum:
+#       - "apa-100mah"
+#       - "apa-200mah"
+#       - "apa-500mah"
+#       - "apa-1000mah"
+#       - "apa-2000mah"
+#       - "apa-3000mah"
