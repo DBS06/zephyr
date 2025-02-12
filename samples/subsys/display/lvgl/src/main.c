@@ -13,6 +13,7 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <lvgl_input_device.h>
+#include <lvgl_zephyr.h>
 
 #define LOG_LEVEL CONFIG_LOG_DEFAULT_LEVEL
 #include <zephyr/logging/log.h>
@@ -21,13 +22,10 @@ LOG_MODULE_REGISTER(app);
 static uint32_t count;
 
 #ifdef CONFIG_RESET_COUNTER_SW0
-static struct gpio_dt_spec button_gpio = GPIO_DT_SPEC_GET_OR(
-		DT_ALIAS(sw0), gpios, {0});
+static struct gpio_dt_spec button_gpio = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {0});
 static struct gpio_callback button_callback;
 
-static void button_isr_callback(const struct device *port,
-				struct gpio_callback *cb,
-				uint32_t pins)
+static void button_isr_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins)
 {
 	ARG_UNUSED(port);
 	ARG_UNUSED(cb);
@@ -66,6 +64,15 @@ int main(void)
 		LOG_ERR("Device not ready, aborting test");
 		return 0;
 	}
+#if 1
+	int err = display_set_orientation(display_dev, DISPLAY_ORIENTATION_ROTATED_270);
+	if (err == 0) {
+		LOG_INF("Display orientation set to rotated 270 degrees");
+	} else {
+		LOG_ERR("Failed to set display orientation");
+	}
+	lv_display_set_rotation(lv_display_get_default(), LV_DISPLAY_ROTATION_270);
+#endif
 
 #ifdef CONFIG_RESET_COUNTER_SW0
 	if (gpio_is_ready_dt(&button_gpio)) {
@@ -77,8 +84,7 @@ int main(void)
 			return 0;
 		}
 
-		gpio_init_callback(&button_callback, button_isr_callback,
-				   BIT(button_gpio.pin));
+		gpio_init_callback(&button_callback, button_isr_callback, BIT(button_gpio.pin));
 
 		err = gpio_add_callback(button_gpio.port, &button_callback);
 		if (err) {
@@ -86,8 +92,7 @@ int main(void)
 			return 0;
 		}
 
-		err = gpio_pin_interrupt_configure_dt(&button_gpio,
-						      GPIO_INT_EDGE_TO_ACTIVE);
+		err = gpio_pin_interrupt_configure_dt(&button_gpio, GPIO_INT_EDGE_TO_ACTIVE);
 		if (err) {
 			LOG_ERR("failed to enable button callback: %d", err);
 			return 0;
@@ -146,7 +151,7 @@ int main(void)
 
 	while (1) {
 		if ((count % 100) == 0U) {
-			sprintf(count_str, "%d", count/100U);
+			sprintf(count_str, "%d", count / 100U);
 			lv_label_set_text(count_label, count_str);
 		}
 		lv_timer_handler();
