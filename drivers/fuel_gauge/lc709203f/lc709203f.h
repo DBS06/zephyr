@@ -9,20 +9,20 @@
 
 #include <zephyr/drivers/i2c.h>
 
-#define REGISTER_THERMISTORB   0x06 ///< Read/write thermistor B
-#define REGISTER_INITIAL_RSOC  0x07 ///< Initialize RSOC calculation
-#define REGISTER_CELL_TEMP     0x08 ///< Read/write batt temperature
-#define REGISTER_CELL_VOLT     0x09 ///< Read batt voltage
-#define REGISTER_APA           0x0B ///< Adjustment Pack Application
-#define REGISTER_RSOC          0x0D ///< Read state of charge
-#define REGISTER_CELLITE       0x0F ///< Read batt indicator to empty
-#define REGISTER_IC_VERSION    0x11 ///< Read IC version
-#define REGISTER_BAT_PROFILE   0x12 ///< Set the battery profile
-#define REGISTER_ALRM_LOW_RSOC 0x13 ///< Alarm on percent threshold
-#define REGISTER_ALRM_LOW_VOLT 0x14 ///< Alarm on voltage threshold
-#define REGISTER_POWER_MODE    0x15 ///< Sets sleep/power mode
-#define REGISTER_STATUSBIT     0x16 ///< Temperature obtaining method
-#define REGISTER_PARAMETER     0x1A ///< Batt profile code
+#define LC709203F_REG_THERMISTORB   0x06 ///< Read/write thermistor B
+#define LC709203F_REG_INITIAL_RSOC  0x07 ///< Initialize RSOC calculation
+#define LC709203F_REG_CELL_TEMP     0x08 ///< Read/write batt temperature
+#define LC709203F_REG_CELL_VOLT     0x09 ///< Read batt voltage
+#define LC709203F_REG_APA           0x0B ///< Adjustment Pack Application
+#define LC709203F_REG_RSOC          0x0D ///< Read state of charge; 1% 0−100 scale
+#define LC709203F_REG_CELLITE       0x0F ///< Read batt indicator to empty; 0.1% 0−1000 scale
+#define LC709203F_REG_IC_VERSION    0x11 ///< Read IC version
+#define LC709203F_REG_BAT_PROFILE   0x12 ///< Set the battery profile
+#define LC709203F_REG_ALRM_LOW_RSOC 0x13 ///< Alarm on percent threshold
+#define LC709203F_REG_ALRM_LOW_VOLT 0x14 ///< Alarm on voltage threshold
+#define LC709203F_REG_POWER_MODE    0x15 ///< Sets sleep/power mode
+#define LC709203F_REG_STATUSBIT     0x16 ///< Temperature obtaining method
+#define LC709203F_REG_PARAMETER     0x1A ///< Batt profile code
 
 struct lc709203f_config {
 	struct i2c_dt_spec i2c;
