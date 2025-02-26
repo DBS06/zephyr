@@ -33,13 +33,19 @@ struct lc709203f_config {
 typedef enum {
 	LC709203F_TEMPERATURE_I2C = 0x0000,
 	LC709203F_TEMPERATURE_THERMISTOR = 0x0001,
-} lc709203_tempmode_t;
+} lc709203_temp_mode_t;
 
 /* Chip power state */
 typedef enum {
 	LC709203F_POWER_OPERATE = 0x0001,
 	LC709203F_POWER_SLEEP = 0x0002,
-} lc709203_powermode_t;
+} lc709203_power_mode_t;
+
+typedef enum {
+	LC709203F_DIRECTION_AUTO = 0x0000,
+	LC709203F_DIRECTION_CHARGE = 0x0001,
+	LC709203F_DIRECTION_DISCHARGE = 0xFFFF,
+} lc709203f_direction_t;
 
 /* Approx battery pack size */
 typedef enum {
@@ -49,6 +55,6 @@ typedef enum {
 	LC709203F_APA_1000MAH = 0x19,
 	LC709203F_APA_2000MAH = 0x2D,
 	LC709203F_APA_3000MAH = 0x36,
-} lc709203_adjustment_t;
+} lc709203f_battery_profile_t;
 
 #endif /* ZEPHYR_DRIVERS_SENSOR_LC709203F_LC709203F_H_ */
