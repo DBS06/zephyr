@@ -587,19 +587,20 @@ int lc709203f_set_thermistor_b(const struct device *dev, uint16_t value)
 	return lc709203f_write_word(dev, LC709203F_REG_THERMISTOR_B, value);
 }
 
-static DEVICE_API(fuel_gauge, bq27z746_driver_api) = {
-	.get_property = &bq27z746_get_prop,
-	.set_property = &bq27z746_set_prop,
-	.get_buffer_property = &bq27z746_get_buffer_prop,
+static DEVICE_API(fuel_gauge, lc709203f_driver_api) = {
+	.get_property = &lc709203f_get_prop,
+	.set_property = &lc709203f6_set_prop,
+	.get_buffer_property = &lc709203f_get_buffer_prop,
 };
 
-#define BQ27Z746_INIT(index)                                                                       \
+#define LC709203F_INIT(index)                                                                      \
                                                                                                    \
-	static const struct bq27z746_config bq27z746_config_##index = {                            \
+	static const struct lc709203f_config lc709203f_config_##index = {                          \
 		.i2c = I2C_DT_SPEC_INST_GET(index),                                                \
 	};                                                                                         \
                                                                                                    \
-	DEVICE_DT_INST_DEFINE(index, &bq27z746_init, NULL, NULL, &bq27z746_config_##index,         \
-			      POST_KERNEL, CONFIG_FUEL_GAUGE_INIT_PRIORITY, &bq27z746_driver_api);
+	DEVICE_DT_INST_DEFINE(index, &lc709203f_init, NULL, NULL, &lc709203f_config_##index,       \
+			      POST_KERNEL, CONFIG_FUEL_GAUGE_INIT_PRIORITY,                        \
+			      &lc709203f_driver_api);
 
-DT_INST_FOREACH_STATUS_OKAY(BQ27Z746_INIT)
+DT_INST_FOREACH_STATUS_OKAY(LC709203F_INIT)
