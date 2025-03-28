@@ -1,0 +1,9 @@
+&i2c0 {
+	lc709203f: lc709203f@0b {
+		compatible = "onsemi,lc709203f";
+		status = "okay";
+		reg = <0x0b>;
+		power-domains = <&i2c_reg>;
+		apa = "500mAh";
+	};
+};
