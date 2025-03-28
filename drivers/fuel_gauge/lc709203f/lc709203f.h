@@ -28,27 +28,27 @@
 #define LC709203F_REG_NUM_PARAMETER     0x1A ///< Batt profile code
 
 /* Battery temperature source */
-typedef enum {
+enum lc709203f_temp_mode {
 	LC709203F_TEMPERATURE_I2C = 0x0000,
 	LC709203F_TEMPERATURE_THERMISTOR = 0x0001,
-} lc709203f_temp_mode_t;
+};
 
 /* Chip power state */
-typedef enum {
+enum lc709203f_power_mode {
 	LC709203F_POWER_MODE_OPERATIONAL = 0x0001,
 	LC709203F_POWER_MODE_SLEEP = 0x0002,
-} lc709203f_power_mode_t;
+};
 
-typedef enum {
+enum lc709203f_direction {
 	LC709203F_DIRECTION_AUTO = 0x0000,
 	LC709203F_DIRECTION_CHARGE = 0x0001,
 	LC709203F_DIRECTION_DISCHARGE = 0xFFFF,
-} lc709203f_direction_t;
+};
 
-typedef enum {
+enum lc709203f_battery_profile {
 	LC709203F_BATTERY_PROFILE_0 = 0x0000,
 	LC709203F_BATTERY_PROFILE_1 = 0x0001,
-} lc709203f_battery_profile_t;
+};
 
 /* Approx battery pack size. Pick the closest of the following values for your battery size. */
 typedef enum {
@@ -64,10 +64,10 @@ struct lc709203f_config {
 	struct i2c_dt_spec i2c;
 	bool initial_rsoc;
 	char *battery_apa;
-	lc709203f_battery_profile_t battery_profile;
+	enum lc709203f_battery_profile battery_profile;
 	bool thermistor;
 	int thermistor_b_value;
 	int thermistor_apt;
-	lc709203f_temp_mode_t thermistor_mode;
+	enum lc709203f_temp_mode thermistor_mode;
 };
 #endif /* ZEPHYR_DRIVERS_SENSOR_LC709203F_LC709203F_H_ */
