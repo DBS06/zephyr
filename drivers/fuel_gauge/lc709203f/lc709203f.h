@@ -9,6 +9,13 @@
 
 #include <zephyr/drivers/i2c.h>
 
+/*
+TODO:
+[ ] Create emulation
+[ ] Create Tests
+[ ] Create PR
+*/
+
 enum lc709203f_regs {
 	LC709203F_REG_BEFORE_RSOC = 0x04,       // Initialize before RSOC
 	LC709203F_REG_THERMISTOR_B = 0x06,      // Read/write thermistor B
