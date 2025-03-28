@@ -48,7 +48,7 @@ typedef enum {
 typedef enum {
 	LC709203F_BATTERY_PROFILE_0 = 0x0000,
 	LC709203F_BATTERY_PROFILE_1 = 0x0001,
-} lc709203f_battery_profile_t; // TODO: Remove if not needed
+} lc709203f_battery_profile_t;
 
 /* Approx battery pack size. Pick the closest of the following values for your battery size. */
 typedef enum {
@@ -64,5 +64,10 @@ struct lc709203f_config {
 	struct i2c_dt_spec i2c;
 	bool initial_rsoc;
 	char *battery_apa;
+	lc709203f_battery_profile_t battery_profile;
+	bool thermistor;
+	int thermistor_b_value;
+	int thermistor_apt;
+	lc709203f_temp_mode_t thermistor_mode;
 };
 #endif /* ZEPHYR_DRIVERS_SENSOR_LC709203F_LC709203F_H_ */

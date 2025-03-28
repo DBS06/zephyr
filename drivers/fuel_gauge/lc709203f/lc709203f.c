@@ -33,21 +33,8 @@
 
 LOG_MODULE_REGISTER(lc709203f);
 
-/* Default I2C address if not overridden by device tree */
-#define LC709203F_INIT_RSOC_VAL 0xAA55 // RSOC initialization value
-
-#define LC709203F_CRC_POLYNOMIAL 0x07 // Polynomial to calculate CRC-8-ATM
-
-/*
- * The LC709203F outputs a raw voltage value that must be multiplied by ~1.1 to
- * obtain a millivolt reading. Similarly, temperature and SOC conversion
- * factors may be required.
- *
- * In this example:
- * - Voltage conversion: voltage_mv = (raw_value * 11 + 5) / 10.
- * - SOC is assumed to be reported as an integer percentage.
- * - Temperature is assumed to be in deci-degrees Celsius (0.1°C per LSB).
- */
+#define LC709203F_INIT_RSOC_VAL  0xAA55 // RSOC initialization value
+#define LC709203F_CRC_POLYNOMIAL 0x07   // Polynomial to calculate CRC-8-ATM
 
 static int lc709203f_read_word(const struct device *dev, uint8_t reg, uint16_t *value);
 static int lc709203f_write_word(const struct device *dev, uint8_t reg, uint16_t value);
@@ -478,8 +465,8 @@ int lc709203f_init(const struct device *dev)
 	if (ret) {
 		LOG_ERR("Failed to get power mode: %d", ret);
 	}
-	LOG_INF("Power mode: %d", mode);
 
+	LOG_INF("Power mode: %d", mode);
 	if (mode == LC709203F_POWER_MODE_SLEEP) {
 		LOG_INF("Set Power mode");
 		ret = lc709203f_set_power_mode(dev, LC709203F_POWER_MODE_OPERATIONAL);
@@ -494,20 +481,32 @@ int lc709203f_init(const struct device *dev)
 		LOG_ERR("Failed to set battery pack: %d", ret);
 	}
 
-	// use 4.2V profile
-	LOG_INF("Set battery profile");
-	ret = lc709203f_set_battery_profile(dev, 0x1);
+	LOG_INF("Set battery profile: %d", config->battery_profile);
+	ret = lc709203f_set_battery_profile(dev, config->battery_profile);
 	if (ret) {
 		LOG_ERR("Failed to set battery profile: %d", ret);
 	}
 
-	LOG_INF("Set temperature mode");
-	lc709203f_set_temp_mode(dev, LC709203F_TEMPERATURE_THERMISTOR);
-	if (ret) {
-		LOG_ERR("Failed to set temperature mode: %d", ret);
+	if (config->thermistor) {
+		LOG_INF("Set temperature mode: %d", config->thermistor_mode);
+		lc709203f_set_temp_mode(dev, config->thermistor_mode);
+		if (ret) {
+			LOG_ERR("Failed to set temperature mode: %d", ret);
+		}
+
+		LOG_INF("Set thermistor B value: %d", config->thermistor_b_value);
+		ret = lc709203f_set_thermistor_b(dev, config->thermistor_b_value);
+		if (ret) {
+			LOG_ERR("Failed to set thermistor B value: %d", ret);
+		}
+
+		LOG_INF("Set thermistor APT: %d", config->thermistor_apt);
+		ret = lc709203f_set_apt(dev, config->thermistor_apt);
+		if (ret) {
+			LOG_ERR("Failed to set thermistor APT: %d", ret);
+		}
 	}
 
-	// initialize RSOC measurement
 	if (config->initial_rsoc) {
 		LOG_INF("lc709203f_initial_rsoc");
 		ret = lc709203f_initial_rsoc(dev);
@@ -526,6 +525,7 @@ static int lc709203f_get_prop(const struct device *dev, fuel_gauge_prop_t prop,
 {
 	int rc = 0;
 	uint16_t tmp_val = 0;
+	const struct lc709203f_config *config = dev->config;
 
 	switch (prop) {
 	case FUEL_GAUGE_RELATIVE_STATE_OF_CHARGE:
@@ -537,13 +537,40 @@ static int lc709203f_get_prop(const struct device *dev, fuel_gauge_prop_t prop,
 		val->voltage = tmp_val * 1000;
 		break;
 	case FUEL_GAUGE_TEMPERATURE:
+		if (!config->thermistor) {
+			LOG_ERR("Thermistor not enabled");
+			return -ENOTSUP;
+		}
 		rc = lc709203f_get_cell_temperature(dev, &tmp_val);
 		val->temperature = tmp_val;
 		break;
 	case FUEL_GAUGE_DESIGN_CAPACITY:
 		lc709203f_battery_apa_t apa;
 		rc = lc709203f_get_apa(dev, &apa);
-		val->design_cap = (uint16_t)apa;
+
+		switch (apa) {
+		case LC709203F_APA_100MAH:
+			val->design_cap = 100;
+			break;
+		case LC709203F_APA_200MAH:
+			val->design_cap = 200;
+			break;
+		case LC709203F_APA_500MAH:
+			val->design_cap = 500;
+			break;
+		case LC709203F_APA_1000MAH:
+			val->design_cap = 1000;
+			break;
+		case LC709203F_APA_2000MAH:
+			val->design_cap = 2000;
+			break;
+		case LC709203F_APA_3000MAH:
+			val->design_cap = 3000;
+			break;
+		default:
+			LOG_ERR("Invalid battery capacity: %d", apa);
+			return -EINVAL;
+		}
 		break;
 	}
 
@@ -575,6 +602,11 @@ static DEVICE_API(fuel_gauge, lc709203f_driver_api) = {
 		.i2c = I2C_DT_SPEC_INST_GET(inst),                                                 \
 		.initial_rsoc = DT_INST_PROP(inst, initial_rsoc),                                  \
 		.battery_apa = DT_INST_PROP(inst, apa),                                            \
+		.battery_profile = DT_INST_PROP(inst, battery_profile),                            \
+		.thermistor = DT_INST_PROP(inst, thermistor),                                      \
+		.thermistor_b_value = DT_INST_PROP(inst, thermistor_b_value),                      \
+		.thermistor_apt = DT_INST_PROP(inst, apt),                                         \
+		.thermistor_mode = DT_INST_PROP(inst, thermistor_mode),                            \
 	};                                                                                         \
                                                                                                    \
 	DEVICE_DT_INST_DEFINE(inst, &lc709203f_init, NULL, NULL, &lc709203f_config_##inst,         \
