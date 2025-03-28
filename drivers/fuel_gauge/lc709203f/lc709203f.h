@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Philipp Steiner <philipp.steiner1987@gmailcom>
+ * Copyright (c) 2025 Philipp Steiner <philipp.steiner1987@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -27,7 +27,6 @@
 #define LC709203F_REG_STATUS_BIT        0x16 ///< Temperature obtaining method
 #define LC709203F_REG_NUM_PARAMETER     0x1A ///< Batt profile code
 
-// TODO: Below Enums needs to be moved to KCONFIG
 /* Battery temperature source */
 typedef enum {
 	LC709203F_TEMPERATURE_I2C = 0x0000,
@@ -49,9 +48,9 @@ typedef enum {
 typedef enum {
 	LC709203F_BATTERY_PROFILE_0 = 0x0000,
 	LC709203F_BATTERY_PROFILE_1 = 0x0001,
-} lc709203f_battery_profile_t;
+} lc709203f_battery_profile_t; // TODO: Remove if not needed
 
-/* Approx battery pack size */
+/* Approx battery pack size. Pick the closest of the following values for your battery size. */
 typedef enum {
 	LC709203F_APA_100MAH = 0x08,
 	LC709203F_APA_200MAH = 0x0B,
@@ -63,5 +62,7 @@ typedef enum {
 
 struct lc709203f_config {
 	struct i2c_dt_spec i2c;
+	bool initial_rsoc;
+	char *battery_apa;
 };
 #endif /* ZEPHYR_DRIVERS_SENSOR_LC709203F_LC709203F_H_ */

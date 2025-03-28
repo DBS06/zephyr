@@ -14,6 +14,8 @@
  *   common LC709203F implementations. Consult your datasheet and adjust as needed.
  * - To use this driver, create a matching device tree node (with a “compatible”
  *   string, I2C bus, and register address) so that the DT_INST_* macros can pick it up.
+ * - The LC chip works best when queried every few seconds at the fastest. Don't disconnect the LiPo
+ *   battery, it is used to power the LC chip!
  */
 
 #define DT_DRV_COMPAT onsemi_lc709203f
@@ -47,13 +49,6 @@ LOG_MODULE_REGISTER(lc709203f);
  * - Temperature is assumed to be in deci-degrees Celsius (0.1°C per LSB).
  */
 
-struct lc709203f_data {
-	/* Last sensor readings (raw values as returned from the chip) */
-	uint16_t voltage;     /* battery voltage */
-	uint16_t rsoc;        /* relative state-of-charge (percentage ) */
-	int16_t temp_celsius; /* cell temperature (assumed in deci-deg Celsius) */
-};
-
 static int lc709203f_read_word(const struct device *dev, uint8_t reg, uint16_t *value);
 static int lc709203f_write_word(const struct device *dev, uint8_t reg, uint16_t value);
 static uint8_t lc709203f_calc_crc(uint8_t *data, size_t data_len);
@@ -65,7 +60,7 @@ int lc709203f_get_alarm_low_rsoc(const struct device *dev, uint8_t *rsoc);
 int lc709203f_get_alarm_low_voltage(const struct device *dev, uint16_t *voltage);
 int lc709203f_get_apa(const struct device *dev, lc709203f_battery_apa_t *apa);
 int lc709203f_get_apt(const struct device *dev, uint16_t *apt);
-int lc709203f_get_battery_profile(const struct device *dev, uint16_t *profile);
+int lc709203f_get_battery_profile(const struct device *dev, lc709203f_battery_profile_t *profile);
 int lc709203f_get_battery_profile_code(const struct device *dev, uint16_t *code);
 int lc709203f_get_cell_ite(const struct device *dev, uint16_t *ite);
 int lc709203f_get_cell_temperature(const struct device *dev, uint16_t *temperature);
@@ -81,7 +76,7 @@ int lc709203f_set_alarm_low_rsoc(const struct device *dev, uint8_t rsoc);
 int lc709203f_set_alarm_low_voltage(const struct device *dev, uint16_t voltage);
 int lc709203f_set_apa(const struct device *dev, lc709203f_battery_apa_t apa);
 int lc709203f_set_apt(const struct device *dev, uint16_t apt);
-int lc709203f_set_battery_profile(const struct device *dev, uint16_t profile);
+int lc709203f_set_battery_profile(const struct device *dev, lc709203f_battery_profile_t profile);
 int lc709203f_set_current_direction(const struct device *dev, lc709203f_direction_t direction);
 int lc709203f_set_power_mode(const struct device *dev, lc709203f_power_mode_t mode);
 int lc709203f_set_temp_mode(const struct device *dev, lc709203f_temp_mode_t mode);
@@ -231,33 +226,33 @@ int lc709203f_get_apa(const struct device *dev, lc709203f_battery_apa_t *apa)
 		return ret;
 	}
 
-	*apa = (lc709203f_battery_profile_t)tmp;
+	*apa = (lc709203f_battery_apa_t)tmp;
 	return 0;
 }
 
 int lc709203f_get_apt(const struct device *dev, uint16_t *apt)
 {
-	uint16_t tmp;
-	int ret;
-
 	if (!dev || !apt) {
 		return -EINVAL;
 	}
-	ret = lc709203f_read_word(dev, LC709203F_REG_APT, &tmp);
-	if (ret) {
-		return ret;
-	}
-
-	*apt = (lc709203f_battery_profile_t)tmp;
-	return 0;
+	return lc709203f_read_word(dev, LC709203F_REG_APT, apt);
 }
 
-int lc709203f_get_battery_profile(const struct device *dev, uint16_t *profile)
+int lc709203f_get_battery_profile(const struct device *dev, lc709203f_battery_profile_t *profile)
 {
+	uint16_t tmp;
+	int ret;
+
 	if (!dev || !profile) {
 		return -EINVAL;
 	}
-	return lc709203f_read_word(dev, LC709203F_REG_BAT_PROFILE, profile);
+
+	ret = lc709203f_read_word(dev, LC709203F_REG_BAT_PROFILE, &tmp);
+	if (ret) {
+		return ret;
+	}
+	*profile = (lc709203f_battery_profile_t)tmp;
+	return 0;
 }
 
 int lc709203f_get_battery_profile_code(const struct device *dev, uint16_t *code)
@@ -405,12 +400,12 @@ int lc709203f_set_apt(const struct device *dev, uint16_t apt)
 	return lc709203f_write_word(dev, LC709203F_REG_APT, apt);
 }
 
-int lc709203f_set_battery_profile(const struct device *dev, uint16_t profile)
+int lc709203f_set_battery_profile(const struct device *dev, lc709203f_battery_profile_t profile)
 {
 	if (!dev) {
 		return -EINVAL;
 	}
-	return lc709203f_write_word(dev, LC709203F_REG_BAT_PROFILE, profile);
+	return lc709203f_write_word(dev, LC709203F_REG_BAT_PROFILE, (uint16_t)profile);
 }
 
 int lc709203f_set_current_direction(const struct device *dev, lc709203f_direction_t direction)
@@ -445,6 +440,25 @@ int lc709203f_set_thermistor_b(const struct device *dev, uint16_t value)
 	return lc709203f_write_word(dev, LC709203F_REG_THERMISTOR_B, value);
 }
 
+lc709203f_battery_apa_t lc709203f_string_to_apa(const char *apa_string)
+{
+	static const char *const apas[] = {"100mAh",  "200mAh",  "500mAh",
+					   "1000mAh", "2000mAh", "3000mAh"};
+
+	static const lc709203f_battery_apa_t apa_values[] = {
+		LC709203F_APA_100MAH,  LC709203F_APA_200MAH,  LC709203F_APA_500MAH,
+		LC709203F_APA_1000MAH, LC709203F_APA_2000MAH, LC709203F_APA_3000MAH};
+
+	// Check if the string is NULL or empty
+	for (size_t i = 0; i < ARRAY_SIZE(apas); i++) {
+		if (strncmp(apa_string, apas[i], strlen(apas[i])) == 0) {
+			return apa_values[i];
+		}
+	}
+	LOG_ERR("Invalid apa_string: %s, returning default: %d", apa_string, LC709203F_APA_100MAH);
+	return LC709203F_APA_100MAH;
+}
+
 /*
  * Device initialization function.
  */
@@ -459,83 +473,53 @@ int lc709203f_init(const struct device *dev)
 	}
 
 	lc709203f_power_mode_t mode;
+	LOG_INF("Get power mode");
 	ret = lc709203f_get_power_mode(dev, &mode);
 	if (ret) {
 		LOG_ERR("Failed to get power mode: %d", ret);
 	}
+	LOG_INF("Power mode: %d", mode);
 
 	if (mode == LC709203F_POWER_MODE_SLEEP) {
+		LOG_INF("Set Power mode");
 		ret = lc709203f_set_power_mode(dev, LC709203F_POWER_MODE_OPERATIONAL);
 		if (ret) {
 			LOG_ERR("Failed to set power mode: %d", ret);
 		}
 	}
 
-	ret = lc709203f_set_apa(dev, LC709203F_APA_500MAH); // TODO: add this to device tree
+	LOG_INF("Set battery pack: %s", config->battery_apa);
+	ret = lc709203f_set_apa(dev, lc709203f_string_to_apa(config->battery_apa));
 	if (ret) {
 		LOG_ERR("Failed to set battery pack: %d", ret);
 	}
 
 	// use 4.2V profile
+	LOG_INF("Set battery profile");
 	ret = lc709203f_set_battery_profile(dev, 0x1);
 	if (ret) {
 		LOG_ERR("Failed to set battery profile: %d", ret);
 	}
 
+	LOG_INF("Set temperature mode");
 	lc709203f_set_temp_mode(dev, LC709203F_TEMPERATURE_THERMISTOR);
 	if (ret) {
 		LOG_ERR("Failed to set temperature mode: %d", ret);
 	}
 
-	// initialize RSOC measurement: // TODO: add this to device tree
-	ret = lc709203f_initial_rsoc(dev);
-	if (ret) {
-		LOG_ERR("Quickstart failed: %d", ret);
-		return ret;
+	// initialize RSOC measurement
+	if (config->initial_rsoc) {
+		LOG_INF("lc709203f_initial_rsoc");
+		ret = lc709203f_initial_rsoc(dev);
+		if (ret) {
+			LOG_ERR("Quickstart failed: %d", ret);
+			return ret;
+		}
 	}
 
 	LOG_INF("initialized");
 	return 0;
 }
-
-#if 0 // TODO: Remove
-/*
- * Sensor API: sample_fetch
- *
- * Fetch the latest measurements from the LC709203F. All three channels
- * (voltage, state-of-charge, and temperature) are updated.
- */
-static int lc709203f_sample_fetch(const struct device *dev, enum sensor_channel chan)
-{
-	struct lc709203f_data *data = dev->data;
-	uint16_t raw;
-	int ret;
-
-	/* Fetch battery voltage (in mV) */
-	ret = lc709203f_read_word(dev, LC709203F_REG_CELL_VOLT, &raw);
-	if (ret < 0) {
-		return ret;
-	}
-	data->voltage = raw;
-
-	/* Fetch battery state-of-charge (RSOC, in %) */
-	ret = lc709203f_read_word(dev, LC709203F_REG_RSOC, &raw);
-	if (ret < 0) {
-		return ret;
-	}
-	data->rsoc = raw;
-
-	/* Fetch temperature (in 0.1 K) and convert to °C */
-	ret = lc709203f_read_word(dev, LC709203F_REG_CELL_TEMP, &raw);
-	if (ret < 0) {
-		return ret;
-	}
-	/* Convert deciKelvin to Celsius */
-	data->temp_celsius = (raw / 10.0f) - 273.15f;
-
-	return 0;
-}
-#endif
 
 static int lc709203f_get_prop(const struct device *dev, fuel_gauge_prop_t prop,
 			      union fuel_gauge_prop_val *val)
@@ -556,32 +540,44 @@ static int lc709203f_get_prop(const struct device *dev, fuel_gauge_prop_t prop,
 		rc = lc709203f_get_cell_temperature(dev, &tmp_val);
 		val->temperature = tmp_val;
 		break;
+	case FUEL_GAUGE_DESIGN_CAPACITY:
+		lc709203f_battery_apa_t apa;
+		rc = lc709203f_get_apa(dev, &apa);
+		val->design_cap = (uint16_t)apa;
+		break;
 	}
 
 	return rc;
 }
 
 static int lc709203f_set_prop(const struct device *dev, fuel_gauge_prop_t prop,
-			      union fuel_gauge_prop_val *val)
+			      union fuel_gauge_prop_val val)
 {
 	int rc = 0;
-	uint16_t tmp_val = 0;
-	// TODO: Implement
+
+	switch (prop) {
+	case FUEL_GAUGE_DESIGN_CAPACITY:
+		rc = lc709203f_set_apa(dev, (lc709203f_battery_apa_t)val.design_cap);
+		break;
+	}
+
 	return rc;
 }
 
 static DEVICE_API(fuel_gauge, lc709203f_driver_api) = {
 	.get_property = &lc709203f_get_prop,
-	// .set_property = &lc709203f_set_prop, // TODO: Implement
+	.set_property = &lc709203f_set_prop,
 };
 
-#define LC709203F_INIT(index)                                                                      \
+#define LC709203F_INIT(inst)                                                                       \
                                                                                                    \
-	static const struct lc709203f_config lc709203f_config_##index = {                          \
-		.i2c = I2C_DT_SPEC_INST_GET(index),                                                \
+	static const struct lc709203f_config lc709203f_config_##inst = {                           \
+		.i2c = I2C_DT_SPEC_INST_GET(inst),                                                 \
+		.initial_rsoc = DT_INST_PROP(inst, initial_rsoc),                                  \
+		.battery_apa = DT_INST_PROP(inst, apa),                                            \
 	};                                                                                         \
                                                                                                    \
-	DEVICE_DT_INST_DEFINE(index, &lc709203f_init, NULL, NULL, &lc709203f_config_##index,       \
+	DEVICE_DT_INST_DEFINE(inst, &lc709203f_init, NULL, NULL, &lc709203f_config_##inst,         \
 			      POST_KERNEL, CONFIG_FUEL_GAUGE_INIT_PRIORITY,                        \
 			      &lc709203f_driver_api);
 

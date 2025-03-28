@@ -4,5 +4,6 @@
 		status = "okay";
 		reg = <0x0b>;
 		power-domains = <&i2c_reg>;
+		apa = "500mAh";
 	};
 };
