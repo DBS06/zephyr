@@ -100,6 +100,10 @@ enum fuel_gauge_prop_type {
 	FUEL_GAUGE_DEVICE_NAME,
 	/** Chemistry (1 byte length + 4 bytes data) */
 	FUEL_GAUGE_DEVICE_CHEMISTRY,
+	/** Remaining state of charge alarm (percent, 0-100) */
+	FUEL_GAUGE_STATE_OF_CHARGE_ALARM,
+	/** Low Cell Voltage Alarm (uV)*/
+	FUEL_GAUGE_LOW_VOLTAGE_ALARM,
 
 	/** Reserved to demark end of common fuel gauge properties */
 	FUEL_GAUGE_COMMON_COUNT,
@@ -174,6 +178,10 @@ union fuel_gauge_prop_val {
 	uint16_t sbs_remaining_capacity_alarm;
 	/** FUEL_GAUGE_SBS_REMAINING_TIME_ALARM */
 	uint16_t sbs_remaining_time_alarm;
+	/** FUEL_GAUGE_STATE_OF_CHARGE_ALARM */
+	uint16_t state_of_charge_alarm;
+	/** FUEL_GAUGE_LOW_VOLTAGE_ALARM */
+	uint32_t low_voltage_alarm;
 };
 
 /**
@@ -223,8 +231,8 @@ typedef int (*fuel_gauge_set_property_t)(const struct device *dev, fuel_gauge_pr
  * See fuel_gauge_get_buffer_property() for argument description
  */
 typedef int (*fuel_gauge_get_buffer_property_t)(const struct device *dev,
-					       fuel_gauge_prop_t prop_type,
-					       void *dst, size_t dst_len);
+						fuel_gauge_prop_t prop_type, void *dst,
+						size_t dst_len);
 
 /**
  * @typedef fuel_gauge_battery_cutoff_t
@@ -375,8 +383,8 @@ __syscall int fuel_gauge_get_buffer_prop(const struct device *dev, fuel_gauge_pr
 					 void *dst, size_t dst_len);
 
 static inline int z_impl_fuel_gauge_get_buffer_prop(const struct device *dev,
-						   fuel_gauge_prop_t prop_type,
-						   void *dst, size_t dst_len)
+						    fuel_gauge_prop_t prop_type, void *dst,
+						    size_t dst_len)
 {
 	const struct fuel_gauge_driver_api *api = (const struct fuel_gauge_driver_api *)dev->api;
 
