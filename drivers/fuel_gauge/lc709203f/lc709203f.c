@@ -43,31 +43,32 @@ static uint8_t lc709203f_calc_crc(uint8_t *data, size_t data_len);
 int lc709203f_before_rsoc(const struct device *dev);  // [ ]
 int lc709203f_initial_rsoc(const struct device *dev); // [x]i
 
-int lc709203f_get_alarm_low_rsoc(const struct device *dev, uint8_t *rsoc);        // [ ]
-int lc709203f_get_alarm_low_voltage(const struct device *dev, uint16_t *voltage); // [ ]
-int lc709203f_get_apa(const struct device *dev, lc709203f_battery_apa_t *apa);    // [x]e
+int lc709203f_get_alarm_low_rsoc(const struct device *dev, uint8_t *rsoc);        // [x]e
+int lc709203f_get_alarm_low_voltage(const struct device *dev, uint16_t *voltage); // [x]e
+int lc709203f_get_apa(const struct device *dev, enum lc709203f_battery_apa *apa); // [x]e
 int lc709203f_get_apt(const struct device *dev, uint16_t *apt);                   // [ ]
 int lc709203f_get_battery_profile(const struct device *dev,
-				  enum lc709203f_battery_profile *profile);                 // [ ]
-int lc709203f_get_battery_profile_code(const struct device *dev, uint16_t *code);           // [ ]
-int lc709203f_get_cell_ite(const struct device *dev, uint16_t *ite);                        // [ ]
-int lc709203f_get_cell_temperature(const struct device *dev, uint16_t *temperature);        // [x]e
-int lc709203f_get_cell_voltage(const struct device *dev, uint16_t *voltage);                // [x]e
-int lc709203f_get_direction(const struct device *dev, enum lc709203f_direction *direction); // [ ]
-int lc709203f_get_ic_version(const struct device *dev, uint16_t *ic_version);               // [ ]
-int lc709203f_get_power_mode(const struct device *dev, enum lc709203f_power_mode *mode);    // [x]i
-int lc709203f_get_rsoc(const struct device *dev, uint16_t *rsoc);                           // [x]e
-int lc709203f_get_temp_mode(const struct device *dev, enum lc709203f_temp_mode *mode);      // [ ]
-int lc709203f_get_thermistor_b(const struct device *dev, uint16_t *value);                  // [ ]
+				  enum lc709203f_battery_profile *profile);          // [x]e
+int lc709203f_get_battery_profile_code(const struct device *dev, uint16_t *code);    // [ ]
+int lc709203f_get_cell_ite(const struct device *dev, uint16_t *ite);                 // [ ]
+int lc709203f_get_cell_temperature(const struct device *dev, uint16_t *temperature); // [x]e
+int lc709203f_get_cell_voltage(const struct device *dev, uint16_t *voltage);         // [x]e
+int lc709203f_get_current_direction(const struct device *dev,
+				    enum lc709203f_current_direction *direction);        // [x]e
+int lc709203f_get_ic_version(const struct device *dev, uint16_t *ic_version);            // [ ]
+int lc709203f_get_power_mode(const struct device *dev, enum lc709203f_power_mode *mode); // [x]i
+int lc709203f_get_rsoc(const struct device *dev, uint8_t *rsoc);                         // [x]e
+int lc709203f_get_temp_mode(const struct device *dev, enum lc709203f_temp_mode *mode);   // [ ]
+int lc709203f_get_thermistor_b(const struct device *dev, uint16_t *value);               // [ ]
 
 int lc709203f_set_alarm_low_rsoc(const struct device *dev, uint8_t rsoc);        // [x]e
 int lc709203f_set_alarm_low_voltage(const struct device *dev, uint16_t voltage); // [x]e
-int lc709203f_set_apa(const struct device *dev, lc709203f_battery_apa_t apa);    // [x]i
+int lc709203f_set_apa(const struct device *dev, enum lc709203f_battery_apa apa); // [x]i
 int lc709203f_set_apt(const struct device *dev, uint16_t apt);                   // [x]i
 int lc709203f_set_battery_profile(const struct device *dev,
 				  enum lc709203f_battery_profile profile); // [x]i
 int lc709203f_set_current_direction(const struct device *dev,
-				    enum lc709203f_direction direction);                // [ ]
+				    enum lc709203f_current_direction direction);        // [x]e
 int lc709203f_set_power_mode(const struct device *dev, enum lc709203f_power_mode mode); // [x]i
 int lc709203f_set_temp_mode(const struct device *dev, enum lc709203f_temp_mode mode);   // [x]i
 int lc709203f_set_thermistor_b(const struct device *dev, uint16_t value);               // [x]i
@@ -202,7 +203,7 @@ int lc709203f_get_alarm_low_voltage(const struct device *dev, uint16_t *voltage)
 	return lc709203f_read_word(dev, LC709203F_REG_ALARM_LOW_VOLTAGE, voltage);
 }
 
-int lc709203f_get_apa(const struct device *dev, lc709203f_battery_apa_t *apa)
+int lc709203f_get_apa(const struct device *dev, enum lc709203f_battery_apa *apa)
 {
 	uint16_t tmp;
 	int ret;
@@ -216,7 +217,7 @@ int lc709203f_get_apa(const struct device *dev, lc709203f_battery_apa_t *apa)
 		return ret;
 	}
 
-	*apa = (lc709203f_battery_apa_t)tmp;
+	*apa = (enum lc709203f_battery_apa)tmp;
 	return 0;
 }
 
@@ -277,7 +278,8 @@ int lc709203f_get_cell_voltage(const struct device *dev, uint16_t *voltage)
 	return lc709203f_read_word(dev, LC709203F_REG_CELL_VOLTAGE, voltage);
 }
 
-int lc709203f_get_direction(const struct device *dev, enum lc709203f_direction *direction)
+int lc709203f_get_current_direction(const struct device *dev,
+				    enum lc709203f_current_direction *direction)
 {
 	uint16_t tmp;
 	int ret;
@@ -291,7 +293,7 @@ int lc709203f_get_direction(const struct device *dev, enum lc709203f_direction *
 		return ret;
 	}
 
-	*direction = (enum lc709203f_direction)tmp;
+	*direction = (enum lc709203f_current_direction)tmp;
 	return 0;
 }
 
@@ -321,12 +323,22 @@ int lc709203f_get_power_mode(const struct device *dev, enum lc709203f_power_mode
 	return 0;
 }
 
-int lc709203f_get_rsoc(const struct device *dev, uint16_t *rsoc)
+int lc709203f_get_rsoc(const struct device *dev, uint8_t *rsoc)
 {
+	uint16_t tmp;
+	int ret;
+
 	if (!dev || !rsoc) {
 		return -EINVAL;
 	}
-	return lc709203f_read_word(dev, LC709203F_REG_RSOC, rsoc);
+
+	ret = lc709203f_read_word(dev, LC709203F_REG_RSOC, &tmp);
+	if (ret) {
+		return ret;
+	}
+
+	*rsoc = (uint8_t)tmp;
+	return 0;
 }
 
 int lc709203f_get_temp_mode(const struct device *dev, enum lc709203f_temp_mode *mode)
@@ -374,7 +386,7 @@ int lc709203f_set_alarm_low_voltage(const struct device *dev, uint16_t voltage)
 	return lc709203f_write_word(dev, LC709203F_REG_ALARM_LOW_VOLTAGE, voltage);
 }
 
-int lc709203f_set_apa(const struct device *dev, lc709203f_battery_apa_t apa)
+int lc709203f_set_apa(const struct device *dev, enum lc709203f_battery_apa apa)
 {
 	if (!dev) {
 		return -EINVAL;
@@ -398,7 +410,8 @@ int lc709203f_set_battery_profile(const struct device *dev, enum lc709203f_batte
 	return lc709203f_write_word(dev, LC709203F_REG_BAT_PROFILE, (uint16_t)profile);
 }
 
-int lc709203f_set_current_direction(const struct device *dev, enum lc709203f_direction direction)
+int lc709203f_set_current_direction(const struct device *dev,
+				    enum lc709203f_current_direction direction)
 {
 	if (!dev) {
 		return -EINVAL;
@@ -430,12 +443,12 @@ int lc709203f_set_thermistor_b(const struct device *dev, uint16_t value)
 	return lc709203f_write_word(dev, LC709203F_REG_THERMISTOR_B, value);
 }
 
-lc709203f_battery_apa_t lc709203f_string_to_apa(const char *apa_string)
+enum lc709203f_battery_apa lc709203f_string_to_apa(const char *apa_string)
 {
 	static const char *const apas[] = {"100mAh",  "200mAh",  "500mAh",
 					   "1000mAh", "2000mAh", "3000mAh"};
 
-	static const lc709203f_battery_apa_t apa_values[] = {
+	static const enum lc709203f_battery_apa apa_values[] = {
 		LC709203F_APA_100MAH,  LC709203F_APA_200MAH,  LC709203F_APA_500MAH,
 		LC709203F_APA_1000MAH, LC709203F_APA_2000MAH, LC709203F_APA_3000MAH};
 
@@ -447,6 +460,34 @@ lc709203f_battery_apa_t lc709203f_string_to_apa(const char *apa_string)
 	}
 	LOG_ERR("Invalid apa_string: %s, returning default: %d", apa_string, LC709203F_APA_100MAH);
 	return LC709203F_APA_100MAH;
+}
+
+enum lc709203f_power_mode lc709203f_num_to_power_mode(uint16_t num)
+{
+	switch (num) {
+	case 0:
+		return LC709203F_POWER_MODE_SLEEP;
+	case 1:
+		return LC709203F_POWER_MODE_OPERATIONAL;
+	default:
+		LOG_ERR("Invalid power mode: %d", num);
+		return LC709203F_POWER_MODE_OPERATIONAL;
+	}
+}
+
+enum lc709203f_current_direction lc709203f_num_to_current_direction(uint16_t num)
+{
+	switch (num) {
+	case 0:
+		return LC709203F_DIRECTION_AUTO;
+	case 1:
+		return LC709203F_DIRECTION_CHARGE;
+	case 0xFFFF:
+		return LC709203F_DIRECTION_DISCHARGE;
+	default:
+		LOG_ERR("Invalid current direction: %d", num);
+		return LC709203F_DIRECTION_AUTO;
+	}
 }
 
 /*
@@ -532,8 +573,7 @@ static int lc709203f_get_prop(const struct device *dev, fuel_gauge_prop_t prop,
 
 	switch (prop) {
 	case FUEL_GAUGE_RELATIVE_STATE_OF_CHARGE:
-		rc = lc709203f_get_rsoc(dev, &tmp_val);
-		val->relative_state_of_charge = tmp_val;
+		rc = lc709203f_get_rsoc(dev, &val->relative_state_of_charge);
 		break;
 	case FUEL_GAUGE_VOLTAGE:
 		rc = lc709203f_get_cell_voltage(dev, &tmp_val);
@@ -544,11 +584,10 @@ static int lc709203f_get_prop(const struct device *dev, fuel_gauge_prop_t prop,
 			LOG_ERR("Thermistor not enabled");
 			return -ENOTSUP;
 		}
-		rc = lc709203f_get_cell_temperature(dev, &tmp_val);
-		val->temperature = tmp_val;
+		rc = lc709203f_get_cell_temperature(dev, &val->temperature);
 		break;
 	case FUEL_GAUGE_DESIGN_CAPACITY:
-		lc709203f_battery_apa_t apa;
+		enum lc709203f_battery_apa apa;
 		rc = lc709203f_get_apa(dev, &apa);
 
 		switch (apa) {
@@ -575,6 +614,20 @@ static int lc709203f_get_prop(const struct device *dev, fuel_gauge_prop_t prop,
 			return -EINVAL;
 		}
 		break;
+	case FUEL_GAUGE_STATE_OF_CHARGE_ALARM:
+		rc = lc709203f_get_alarm_low_rsoc(dev, &val->state_of_charge_alarm);
+		break;
+	case FUEL_GAUGE_LOW_VOLTAGE_ALARM:
+		rc = lc709203f_get_alarm_low_voltage(dev, &tmp_val);
+		val->low_voltage_alarm = tmp_val * 1000;
+		break;
+	case FUEL_GAUGE_SBS_MODE:
+		rc = lc709203f_get_power_mode(dev, (enum lc709203f_power_mode *)&tmp_val);
+		break;
+	case FUEL_GAUGE_CURRENT_DIRECTION:
+		rc = lc709203f_get_current_direction(
+			dev, (enum lc709203f_current_direction *)&val->current_direction);
+		break;
 	default:
 		rc = -ENOTSUP;
 		break;
@@ -594,6 +647,13 @@ static int lc709203f_set_prop(const struct device *dev, fuel_gauge_prop_t prop,
 		break;
 	case FUEL_GAUGE_LOW_VOLTAGE_ALARM:
 		rc = lc709203f_set_alarm_low_voltage(dev, val.low_voltage_alarm / 1000);
+		break;
+	case FUEL_GAUGE_SBS_MODE:
+		rc = lc709203f_set_power_mode(dev, lc709203f_num_to_power_mode(val.sbs_mode));
+		break;
+	case FUEL_GAUGE_CURRENT_DIRECTION:
+		rc = lc709203f_set_current_direction(
+			dev, lc709203f_num_to_current_direction(val.current_direction));
 		break;
 	default:
 		rc = -ENOTSUP;
