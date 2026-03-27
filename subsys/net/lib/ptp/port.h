@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2024 BayLibre SAS
+ * Copyright (c) 2026 Philipp Steiner <philipp.steiner1987@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -68,6 +69,10 @@ struct ptp_port {
 	enum ptp_port_state	       (*state_machine)(enum ptp_port_state state,
 							enum ptp_port_event event,
 							bool tt_diff);
+	/** True if a Sync was sent and corresponding Follow_Up is still pending. */
+	bool			       sync_fup_pending;
+	/** Sequence ID for the pending Sync/Follow_Up pair. */
+	uint16_t		       sync_fup_sequence_id;
 	/** Pointer to the Port's best Foreign TimeTransmitter. */
 	struct ptp_foreign_tt_clock    *best;
 	/** List of Foreign TimeTransmitters discovered through received Announce messages. */
