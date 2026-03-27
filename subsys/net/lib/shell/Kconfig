@@ -70,6 +70,11 @@ config NET_SHELL_GPTP_SUPPORTED
 	default y
 	depends on NET_SHELL_SHOW_DISABLED_COMMANDS || NET_GPTP
 
+config NET_SHELL_PTP_SUPPORTED
+	bool "PTP monitoring"
+	default y
+	depends on NET_SHELL_SHOW_DISABLED_COMMANDS || PTP
+
 config NET_SHELL_HTTP_SERVER_SUPPORTED
 	bool "HTTP server status"
 	default y
