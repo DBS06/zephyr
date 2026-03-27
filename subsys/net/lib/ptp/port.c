@@ -353,6 +353,9 @@ static int port_delay_req_msg_transmit(struct ptp_port *port)
 	msg->header.sequence_id	      = port->seq_id.delay++;
 	msg->header.log_msg_interval  = DEFAULT_LOG_MSG_INTERVAL;
 
+	net_if_register_timestamp_cb(&port->delay_req_ts_cb, NULL, port->iface,
+				     port_delay_req_timestamp_cb);
+
 	if (IS_ENABLED(CONFIG_PTP_IEEE_802_3_PROTOCOL)) {
 		const struct device *phc = net_eth_get_ptp_clock(port->iface);
 
@@ -362,12 +365,6 @@ static int port_delay_req_msg_transmit(struct ptp_port *port)
 			msg->timestamp.host.second = (uint64_t)(current / MSEC_PER_SEC);
 			msg->timestamp.host.nanosecond = (current % MSEC_PER_SEC) * NSEC_PER_MSEC;
 		}
-	}
-	else {
-		net_if_register_timestamp_cb(&port->delay_req_ts_cb,
-					     NULL,
-					     port->iface,
-					     port_delay_req_timestamp_cb);
 	}
 
 	sys_slist_append(&port->delay_req_list, &msg->node);
@@ -971,6 +968,9 @@ static int port_enable(struct ptp_port *port)
 	}
 
 	port->link_status = PORT_LINK_UP;
+	port->l2_try_recvmsg = true;
+	port->l2_recvmsg_fallback_warned = false;
+	port->l2_recvmsg_retry_at = 0;
 
 	if (ptp_transport_open(port)) {
 		LOG_ERR("Couldn't open socket on Port %d.", port->port_ds.id.port_number);
@@ -1119,6 +1119,9 @@ void ptp_port_init(struct net_if *iface, void *user_data)
 	port->last_sync_fup = NULL;
 	port->sync_fup_pending = false;
 	port->sync_fup_sequence_id = 0;
+	port->l2_try_recvmsg = true;
+	port->l2_recvmsg_fallback_warned = false;
+	port->l2_recvmsg_retry_at = 0;
 
 	port_ds_init(port);
 	sys_slist_init(&port->foreign_list);

@@ -21,6 +21,7 @@ LOG_MODULE_REGISTER(ptp_transport, CONFIG_PTP_LOG_LEVEL);
 
 #define INTERFACE_NAME_LEN (32)
 #define PTP_L2_ADDR_LEN    (NET_ETH_ADDR_LEN)
+#define PTP_L2_RECVMSG_RETRY_MS MSEC_PER_SEC
 
 static const struct net_in_addr mcast_addr_ipv4 = {{{224, 0, 1, 129}}};
 static const struct net_in6_addr mcast_addr_ipv6 = {
@@ -454,9 +455,16 @@ static int transport_recv_l2_msg(struct ptp_port *port, struct ptp_msg *msg)
 	uint8_t ctrl[NET_CMSG_SPACE(sizeof(struct net_ptp_time))] = {0};
 	struct net_msghdr msghdr;
 	struct net_iovec iov;
+	int64_t now;
 	int cnt;
 
 	transport_init_recv_msghdr(msg, &msghdr, &iov, ctrl, sizeof(ctrl));
+
+	now = k_uptime_get();
+
+	if (!port->l2_try_recvmsg && now >= port->l2_recvmsg_retry_at) {
+		port->l2_try_recvmsg = true;
+	}
 
 	if (port->l2_try_recvmsg) {
 		cnt = zsock_recvmsg(port->socket[PTP_SOCKET_EVENT], &msghdr, ZSOCK_MSG_DONTWAIT);
@@ -467,14 +475,16 @@ static int transport_recv_l2_msg(struct ptp_port *port, struct ptp_msg *msg)
 
 			if (!port->l2_recvmsg_fallback_warned) {
 				LOG_WRN("L2 recvmsg timestamping failed (errno %d), fallback to "
-					"recvfrom()",
+					"recvfrom() until recvmsg retry",
 					errno);
 				port->l2_recvmsg_fallback_warned = true;
 			}
 
 			port->l2_try_recvmsg = false;
+			port->l2_recvmsg_retry_at = now + PTP_L2_RECVMSG_RETRY_MS;
 		} else {
 			recvmsg_ok = true;
+			port->l2_recvmsg_retry_at = 0;
 		}
 	}
 

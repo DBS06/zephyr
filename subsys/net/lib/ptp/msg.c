@@ -289,7 +289,10 @@ static struct ptp_msg *msg_from_udp_pkt(struct net_pkt *pkt)
 	}
 
 	if (!hdr) {
-		LOG_WRN("Couldn't retrieve UDP header from the net packet");
+		/* Suppress warning when IEEE 802.3 protocol is enabled */
+		if (!IS_ENABLED(CONFIG_PTP_IEEE_802_3_PROTOCOL)) {
+			LOG_WRN("Couldn't retrieve UDP header from the net packet");
+		}
 		return NULL;
 	}
 
@@ -297,7 +300,10 @@ static struct ptp_msg *msg_from_udp_pkt(struct net_pkt *pkt)
 	port = net_ntohs(hdr->dst_port);
 
 	if (port != PTP_SOCKET_PORT_EVENT && port != PTP_SOCKET_PORT_GENERAL) {
-		LOG_WRN("Couldn't retrieve PTP message from the net packet");
+		/* Suppress warning when IEEE 802.3 protocol is enabled */
+		if (!IS_ENABLED(CONFIG_PTP_IEEE_802_3_PROTOCOL)) {
+			LOG_DBG("Couldn't retrieve PTP message from the net packet");
+		}
 		return NULL;
 	}
 
@@ -489,10 +495,12 @@ int ptp_msg_post_recv(struct ptp_port *port, struct ptp_msg *msg, int cnt)
 		msg_port_id_post_recv(&msg->pdelay_resp_follow_up.req_port_id);
 		break;
 	case PTP_MSG_ANNOUNCE:
-		current = k_uptime_get();
+		if (msg->timestamp.host.second == 0 && msg->timestamp.host.nanosecond == 0) {
+			current = k_uptime_get();
 
-		msg->timestamp.host.second = (uint64_t)(current / MSEC_PER_SEC);
-		msg->timestamp.host.nanosecond = (current % MSEC_PER_SEC) * NSEC_PER_MSEC;
+			msg->timestamp.host.second = (uint64_t)(current / MSEC_PER_SEC);
+			msg->timestamp.host.nanosecond = (current % MSEC_PER_SEC) * NSEC_PER_MSEC;
+		}
 		msg_timestamp_post_recv(msg, &msg->announce.origin_timestamp);
 		msg->announce.current_utc_offset = net_ntohs(msg->announce.current_utc_offset);
 		msg->announce.gm_clk_quality.offset_scaled_log_variance =
