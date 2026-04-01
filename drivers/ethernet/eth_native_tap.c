@@ -41,6 +41,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <zephyr/net/lldp.h>
 
 #include "eth_native_tap_priv.h"
+#include "eth_native_tap_ptp_emulated.h"
 #include "nsi_host_trampolines.h"
 #include "eth.h"
 
@@ -82,12 +83,23 @@ static const char *ipv4_nm_cmd_opt;
 static const char *ipv4_gw_cmd_opt;
 #endif
 
-static void update_pkt_timestamp(struct net_pkt *pkt)
+static void update_pkt_timestamp(struct eth_context *ctx, struct net_pkt *pkt)
 {
 	struct net_ptp_time timestamp = {
 		.second = UINT64_MAX,
 		.nanosecond = UINT32_MAX,
 	};
+
+#if defined(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)
+	if (IS_ENABLED(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED) &&
+	    ctx->ptp_clock != NULL &&
+	    ptp_clock_get(ctx->ptp_clock, &timestamp) == 0) {
+		net_pkt_set_timestamp(pkt, &timestamp);
+		return;
+	}
+#else
+	ARG_UNUSED(ctx);
+#endif
 
 	if (eth_clock_gettime(&timestamp.second, &timestamp.nanosecond) < 0) {
 		LOG_DBG("Failed to retrieve packet timestamp");
@@ -226,7 +238,7 @@ static int eth_send(const struct device *dev, struct net_pkt *pkt)
 	}
 
 	/* Native TAP can only provide an approximate host-side TX timestamp. */
-	update_pkt_timestamp(pkt);
+	update_pkt_timestamp(ctx, pkt);
 	bool timestamp_queued = update_gptp(net_pkt_iface(pkt), pkt, true);
 
 	if (!timestamp_queued && net_pkt_is_tx_timestamping(pkt)) {
@@ -278,7 +290,7 @@ static int read_data(struct eth_context *ctx, int fd)
 		return status;
 	}
 
-	update_pkt_timestamp(pkt);
+	update_pkt_timestamp(ctx, pkt);
 	(void)update_gptp(iface, pkt, false);
 
 	if (net_recv_data(iface, pkt) < 0) {
@@ -556,6 +568,8 @@ BUILD_ASSERT(								\
 
 struct ptp_context {
 	struct eth_context *eth_context;
+	struct eth_native_tap_ptp_state state;
+	struct k_spinlock lock;
 };
 
 #define DEFINE_PTP_DEV_DATA(x, _) \
@@ -563,8 +577,41 @@ struct ptp_context {
 
 LISTIFY(CONFIG_ETH_NATIVE_TAP_INTERFACE_COUNT, DEFINE_PTP_DEV_DATA, (;), _);
 
+static int native_tap_get_host_time_ns(int64_t *host_now_ns)
+{
+	struct net_ptp_time host_time;
+	int ret;
+
+	ret = eth_clock_gettime(&host_time.second, &host_time.nanosecond);
+	if (ret < 0) {
+		return ret;
+	}
+
+	return eth_native_tap_ptp_time_to_ns(&host_time, host_now_ns);
+}
+
 static int ptp_clock_set_native_tap(const struct device *clk, struct net_ptp_time *tm)
 {
+#if defined(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)
+	struct ptp_context *ptp_context = clk->data;
+	k_spinlock_key_t key;
+	int64_t host_now_ns;
+	int ret;
+
+	if (IS_ENABLED(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)) {
+		ret = native_tap_get_host_time_ns(&host_now_ns);
+		if (ret < 0) {
+			return ret;
+		}
+
+		key = k_spin_lock(&ptp_context->lock);
+		ret = eth_native_tap_ptp_set_time(&ptp_context->state, host_now_ns, tm);
+		k_spin_unlock(&ptp_context->lock, key);
+
+		return ret;
+	}
+#endif
+
 	ARG_UNUSED(clk);
 	ARG_UNUSED(tm);
 
@@ -577,13 +624,53 @@ static int ptp_clock_set_native_tap(const struct device *clk, struct net_ptp_tim
 
 static int ptp_clock_get_native_tap(const struct device *clk, struct net_ptp_time *tm)
 {
+#if defined(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)
+	struct ptp_context *ptp_context = clk->data;
+	k_spinlock_key_t key;
+	int64_t host_now_ns;
+	int ret;
+
+	if (IS_ENABLED(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)) {
+		ret = native_tap_get_host_time_ns(&host_now_ns);
+		if (ret < 0) {
+			return ret;
+		}
+
+		key = k_spin_lock(&ptp_context->lock);
+		ret = eth_native_tap_ptp_read_time(&ptp_context->state, true, host_now_ns, tm);
+		k_spin_unlock(&ptp_context->lock, key);
+
+		return ret;
+	}
+#else
 	ARG_UNUSED(clk);
+#endif
 
 	return eth_clock_gettime(&tm->second, &tm->nanosecond);
 }
 
 static int ptp_clock_adjust_native_tap(const struct device *clk, int increment)
 {
+#if defined(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)
+	struct ptp_context *ptp_context = clk->data;
+	k_spinlock_key_t key;
+	int64_t host_now_ns;
+	int ret;
+
+	if (IS_ENABLED(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)) {
+		ret = native_tap_get_host_time_ns(&host_now_ns);
+		if (ret < 0) {
+			return ret;
+		}
+
+		key = k_spin_lock(&ptp_context->lock);
+		ret = eth_native_tap_ptp_adjust_time(&ptp_context->state, host_now_ns, increment);
+		k_spin_unlock(&ptp_context->lock, key);
+
+		return ret;
+	}
+#endif
+
 	ARG_UNUSED(clk);
 	ARG_UNUSED(increment);
 
@@ -596,6 +683,26 @@ static int ptp_clock_adjust_native_tap(const struct device *clk, int increment)
 
 static int ptp_clock_rate_adjust_native_tap(const struct device *clk, double ratio)
 {
+#if defined(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)
+	struct ptp_context *ptp_context = clk->data;
+	k_spinlock_key_t key;
+	int64_t host_now_ns;
+	int ret;
+
+	if (IS_ENABLED(CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED)) {
+		ret = native_tap_get_host_time_ns(&host_now_ns);
+		if (ret < 0) {
+			return ret;
+		}
+
+		key = k_spin_lock(&ptp_context->lock);
+		ret = eth_native_tap_ptp_rate_adjust(&ptp_context->state, host_now_ns, ratio);
+		k_spin_unlock(&ptp_context->lock, key);
+
+		return ret;
+	}
+#endif
+
 	ARG_UNUSED(clk);
 	ARG_UNUSED(ratio);
 

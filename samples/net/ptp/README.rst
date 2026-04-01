@@ -32,6 +32,12 @@ A good way to run this sample is to run this PTP application inside
 embedded device like :zephyr:board:`nucleo_h563zi`, :zephyr:board:`nucleo_h743zi`,
 :zephyr:board:`nucleo_h745zi_q` or :zephyr:board:`nucleo_f767zi`.
 
+The native_sim sample board configurations enable
+:kconfig:option:`CONFIG_ETH_NATIVE_TAP_PTP_CLOCK_EMULATED`, which gives Zephyr
+an adjustable software PHC layered on top of native_tap host timestamps. This
+makes ``net ptp`` and ``net ptp 1`` useful for observing the current PHC while
+the PTP servo is running.
+
 Note that PTP is only supported for
 boards that have an Ethernet port and which has support for collecting
 timestamps for sent and received Ethernet frames.

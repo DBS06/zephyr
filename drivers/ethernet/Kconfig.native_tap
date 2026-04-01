@@ -47,6 +47,17 @@ config ETH_NATIVE_TAP_PTP_CLOCK
 	help
 	  Enable PTP clock support.
 
+config ETH_NATIVE_TAP_PTP_CLOCK_EMULATED
+	bool "Emulated adjustable PTP clock"
+	default n
+	depends on ETH_NATIVE_TAP_PTP_CLOCK
+	help
+	  Provide a per-interface software PTP clock for native_sim native_tap.
+	  The emulated clock is layered on top of the host CLOCK_MONOTONIC_RAW
+	  timestamp source and supports set, adjust and rate_adjust operations.
+	  When disabled, the native_tap PTP clock keeps the existing compatibility
+	  behavior and only exposes read-only host timestamps.
+
 config ETH_NATIVE_TAP_RANDOM_MAC
 	bool "Random MAC address"
 	depends on ENTROPY_GENERATOR
