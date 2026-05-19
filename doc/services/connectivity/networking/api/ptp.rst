@@ -41,7 +41,7 @@ In the table below all supported features are listed.
     Transparent Clock,
     Management Node,
     End to end delay mechanism, yes
-    Peer to peer delay mechanism,
+    Peer to peer delay mechanism, yes (two-step)
     Multicast operation mode,
     Hybrid operation mode,
     Unicast operation mode,
@@ -113,7 +113,7 @@ are supported:
     0x4000, TRANSPARENT_CLOCK_DEFAULT_DATA_SET, -
     0x4001, TRANSPARENT_CLOCK_PORT_DATA_SET, -
     0x4002, PRIMARY_DOMAIN, -
-    0x6000, DELAY_MECHANISM, GET
+    0x6000, DELAY_MECHANISM, GET SET
     0x6001, LOG_MIN_PDELAY_REQ_INTERVAL, GET SET
 
 Timestamping notes
@@ -132,6 +132,12 @@ generated from TX timestamp callbacks. If a TX timestamp is missing or late,
 the stack logs a warning and skips Follow_Up for that Sync sequence, then
 continues normal Sync transmission on subsequent intervals (best-effort
 behavior).
+
+Peer-to-peer delay measurement can be selected with
+:kconfig:option:`CONFIG_PTP_DELAY_MECHANISM_P2P`. The first supported P2P mode
+is two-step ``Pdelay_Req`` / ``Pdelay_Resp`` /
+``Pdelay_Resp_Follow_Up``. One-step ``Pdelay_Resp`` samples are rejected and
+logged for a later implementation.
 
 Supported hardware
 ******************
