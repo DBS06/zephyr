@@ -553,12 +553,41 @@ static uint64_t clock_abs_delta_u64(uint64_t a, uint64_t b)
 	return a >= b ? a - b : b - a;
 }
 
-void ptp_clock_synchronize(uint64_t ingress, uint64_t egress, bool ingress_ts_valid)
+static void clock_update_neighbor_rate_ratio(struct ptp_port *port, int64_t resp_origin_ns,
+					     int64_t resp_ingress_ns)
+{
+	if (!port->pdelay_prev_rate_sample_valid) {
+		port->neighbor_rate_ratio = 1.0;
+		port->neighbor_rate_ratio_valid = false;
+		port->pdelay_prev_resp_origin_ns = resp_origin_ns;
+		port->pdelay_prev_resp_ingress_ns = resp_ingress_ns;
+		port->pdelay_prev_rate_sample_valid = true;
+		return;
+	}
+
+	int64_t peer_delta = resp_origin_ns - port->pdelay_prev_resp_origin_ns;
+	int64_t local_delta = resp_ingress_ns - port->pdelay_prev_resp_ingress_ns;
+
+	port->pdelay_prev_resp_origin_ns = resp_origin_ns;
+	port->pdelay_prev_resp_ingress_ns = resp_ingress_ns;
+
+	if (peer_delta <= 0 || local_delta <= 0) {
+		port->neighbor_rate_ratio = 1.0;
+		port->neighbor_rate_ratio_valid = false;
+		return;
+	}
+
+	port->neighbor_rate_ratio = (double)peer_delta / (double)local_delta;
+	port->neighbor_rate_ratio_valid = true;
+}
+
+static void clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
+					 ptp_timeinterval mean_delay, bool ingress_ts_valid)
 {
 	double ppb;
 	int64_t offset;
 	int ret;
-	int64_t delay = ptp_clk.current_ds.mean_delay >> 16;
+	int64_t delay = mean_delay >> 16;
 	struct net_ptp_time current;
 	uint64_t phc_now_ns;
 	uint64_t ingress_phc_delta;
@@ -584,7 +613,7 @@ void ptp_clock_synchronize(uint64_t ingress, uint64_t egress, bool ingress_ts_va
 	ptp_clk.timestamp.t1 = egress;
 	ptp_clk.timestamp.t2 = ingress;
 
-	if (!ptp_clk.current_ds.mean_delay) {
+	if (!mean_delay) {
 		return;
 	}
 
@@ -647,6 +676,19 @@ void ptp_clock_synchronize(uint64_t ingress, uint64_t egress, bool ingress_ts_va
 	}
 }
 
+void ptp_clock_synchronize(uint64_t ingress, uint64_t egress, bool ingress_ts_valid)
+{
+	clock_synchronize_with_delay(ingress, egress, ptp_clk.current_ds.mean_delay,
+				     ingress_ts_valid);
+}
+
+void ptp_clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
+				      ptp_timeinterval mean_delay, bool ingress_ts_valid)
+{
+	ptp_clk.current_ds.mean_delay = mean_delay;
+	clock_synchronize_with_delay(ingress, egress, mean_delay, ingress_ts_valid);
+}
+
 void ptp_clock_delay(uint64_t egress, uint64_t ingress)
 {
 	int64_t delay;
@@ -669,6 +711,41 @@ void ptp_clock_delay(uint64_t egress, uint64_t ingress)
 
 	LOG_DBG("Delay %lldns", delay);
 	ptp_clk.current_ds.mean_delay = clock_ns_to_timeinterval(delay);
+}
+
+int ptp_clock_pdelay(struct ptp_port *port, int64_t t1, int64_t t2, int64_t t3, int64_t t4,
+		     ptp_timeinterval correction_resp, ptp_timeinterval correction_fup)
+{
+	int64_t correction_resp_ns;
+	int64_t correction_fup_ns;
+	int64_t delay_asymmetry_ns;
+	int64_t turnaround;
+	int64_t delay;
+
+	if (!port || t1 <= 0 || t2 <= 0 || t3 <= 0 || t4 <= 0) {
+		return -EINVAL;
+	}
+
+	correction_resp_ns = correction_resp >> 16;
+	correction_fup_ns = correction_fup >> 16;
+	delay_asymmetry_ns = port->port_ds.delay_asymmetry >> 16;
+	turnaround = t3 - t2;
+	delay = ((t4 - t1) - turnaround - correction_resp_ns - correction_fup_ns -
+		 delay_asymmetry_ns) /
+		2LL;
+
+	if (delay < 0 || delay > (int64_t)NSEC_PER_SEC) {
+		LOG_WRN("Ignoring unrealistic peer delay sample: %lldns", delay);
+		return -ERANGE;
+	}
+
+	LOG_DBG("Peer delay %lldns", delay);
+	port->port_ds.mean_link_delay = clock_ns_to_timeinterval(delay);
+	ptp_clk.current_ds.mean_delay = port->port_ds.mean_link_delay;
+
+	clock_update_neighbor_rate_ratio(port, t3 + correction_fup_ns, t4);
+
+	return 0;
 }
 
 sys_slist_t *ptp_clock_ports_list(void)
