@@ -329,6 +329,55 @@ ZTEST(ptp_clock_wakeup, test_delay_rejects_unrealistic_sample)
 	zassert_equal(ptp_clk.current_ds.mean_delay, 0, "unrealistic delay should be ignored");
 }
 
+ZTEST(ptp_clock_wakeup, test_pdelay_updates_mean_link_delay_with_corrections)
+{
+	struct ptp_port port = {0};
+
+	port.port_ds.delay_asymmetry = (ptp_timeinterval)20 << 16;
+
+	zassert_ok(ptp_clock_pdelay(&port, 1000, 1500, 1800, 2600, (ptp_timeinterval)30 << 16,
+				    (ptp_timeinterval)10 << 16),
+		   "valid Pdelay sample rejected");
+	zassert_equal(port.port_ds.mean_link_delay, (ptp_timeinterval)620 << 16,
+		      "meanLinkDelay mismatch");
+	zassert_equal(ptp_clk.current_ds.mean_delay, (ptp_timeinterval)620 << 16,
+		      "current mean delay mismatch");
+	zassert_equal(port.neighbor_rate_ratio, 1.0, "first sample should use nominal ratio");
+	zassert_false(port.neighbor_rate_ratio_valid, "first sample should not have rate ratio");
+}
+
+ZTEST(ptp_clock_wakeup, test_pdelay_rejects_negative_and_incomplete_samples)
+{
+	struct ptp_port port = {0};
+
+	port.port_ds.mean_link_delay = (ptp_timeinterval)123 << 16;
+
+	zassert_equal(ptp_clock_pdelay(&port, 1000, 1000, 3000, 1500, 0, 0), -ERANGE,
+		      "negative Pdelay sample should be rejected");
+	zassert_equal(port.port_ds.mean_link_delay, (ptp_timeinterval)123 << 16,
+		      "rejected sample should not update meanLinkDelay");
+
+	zassert_equal(ptp_clock_pdelay(&port, 0, 1000, 2000, 3000, 0, 0), -EINVAL,
+		      "incomplete Pdelay timestamps should be rejected");
+	zassert_equal(port.port_ds.mean_link_delay, (ptp_timeinterval)123 << 16,
+		      "incomplete sample should not update meanLinkDelay");
+}
+
+ZTEST(ptp_clock_wakeup, test_pdelay_updates_neighbor_rate_ratio_after_second_sample)
+{
+	struct ptp_port port = {0};
+
+	zassert_ok(ptp_clock_pdelay(&port, 1000, 1100, 1200, 1600, 0, 0),
+		   "first Pdelay sample rejected");
+	zassert_false(port.neighbor_rate_ratio_valid, "first sample should not have ratio");
+
+	zassert_ok(ptp_clock_pdelay(&port, 2000, 2200, 3300, 3600, 0, 0),
+		   "second Pdelay sample rejected");
+	zassert_true(port.neighbor_rate_ratio_valid, "second sample should update ratio");
+	zassert_true(port.neighbor_rate_ratio > 1.0 && port.neighbor_rate_ratio < 1.1,
+		     "unexpected neighbor rate ratio");
+}
+
 ZTEST(ptp_clock_wakeup, test_synchronize_uses_phc_time_when_ingress_timestamp_missing)
 {
 	uint64_t phc_now = 5ULL * NSEC_PER_SEC + 250;
