@@ -15,6 +15,7 @@
 #define __GPTP_PRIVATE_H
 
 #include <zephyr/net/gptp.h>
+#include <zephyr/timing/precision_timing.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,8 +37,8 @@ extern "C" {
 struct gptp_clock_data {
 	/** gptp_domain pointer */
 	struct gptp_domain *domain;
-	/** pi control drift value */
-	double pi_drift;
+	/** Shared precision timing discipline instance. */
+	struct precision_pi_discipline discipline;
 };
 
 extern struct gptp_clock_data gptp_clock;
@@ -119,15 +120,6 @@ static inline uint64_t gptp_timestamp_to_nsec(struct net_ptp_time *ts)
 
 	return (ts->second * NSEC_PER_SEC) + ts->nanosecond;
 }
-
-/**
- * @brief gPTP PI servo.
- *
- * @param nanosecond_diff nanosecond offset.
- *
- * @return ppb value to adjust.
- */
-double gptp_servo_pi(int64_t nanosecond_diff);
 
 /**
  * @brief Change the port state

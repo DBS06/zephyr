@@ -7,6 +7,8 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(net_gptp, CONFIG_NET_GPTP_LOG_LEVEL);
 
+#include <stdint.h>
+
 #include <zephyr/net/net_log.h>
 #include <zephyr/net/net_pkt.h>
 #include <zephyr/drivers/ptp_clock.h>
@@ -14,6 +16,7 @@ LOG_MODULE_REGISTER(net_gptp, CONFIG_NET_GPTP_LOG_LEVEL);
 #include <zephyr/random/random.h>
 
 #include <zephyr/net/gptp.h>
+#include <zephyr/timing/precision_timing.h>
 
 #include "gptp_messages.h"
 #include "gptp_mi.h"
@@ -37,6 +40,10 @@ static k_tid_t tid;
 static struct k_thread gptp_thread_data;
 struct gptp_domain gptp_domain;
 struct gptp_clock_data gptp_clock;
+
+#define GPTP_SERVO_STEP_THRESHOLD_NS (50LL * NSEC_PER_MSEC)
+/* CONFIG_NET_GPTP_SERVO_KP and CONFIG_NET_GPTP_SERVO_KI express gains in thousandths. */
+#define GPTP_SERVO_GAIN_DEN 1000
 
 int gptp_get_port_number(struct net_if *iface)
 {
@@ -922,16 +929,28 @@ int gptp_get_port_data(struct gptp_domain *domain,
 	return 0;
 }
 
-double gptp_servo_pi(int64_t nanosecond_diff)
+static void gptp_clock_discipline_init(void)
 {
-	double kp = 0.7;
-	double ki = 0.3;
-	double ppb;
+	struct precision_pi_config config = {
+		.source_domain = {
+			.type = PRECISION_TIME_DOMAIN_GPTP,
+			.id = 0,
+		},
+		.local_domain = {
+			.type = PRECISION_TIME_DOMAIN_PHC,
+			.id = 0,
+		},
+		.step_threshold_ns = GPTP_SERVO_STEP_THRESHOLD_NS,
+		.lock_sample_count = 0,
+		.outlier_sample_count = 0,
+		.min_rate_ppb = -999999999,
+		.max_rate_ppb = INT32_MAX,
+		.kp_num = CONFIG_NET_GPTP_SERVO_KP,
+		.ki_num = CONFIG_NET_GPTP_SERVO_KI,
+		.gain_den = GPTP_SERVO_GAIN_DEN,
+	};
 
-	gptp_clock.pi_drift += ki * nanosecond_diff;
-	ppb = kp * nanosecond_diff + gptp_clock.pi_drift;
-
-	return ppb;
+	(void)precision_pi_init(&gptp_clock.discipline, &config);
 }
 
 static void init_ports(void)
@@ -953,7 +972,7 @@ void net_gptp_init(void)
 	gptp_domain.default_ds.nb_ports = 0U;
 
 	gptp_clock.domain = &gptp_domain;
-	gptp_clock.pi_drift = 0.0;
+	gptp_clock_discipline_init();
 
 	init_ports();
 }
