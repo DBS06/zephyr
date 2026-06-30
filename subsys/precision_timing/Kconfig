@@ -1,0 +1,10 @@
+# Copyright (c) 2026 Philipp Steiner <philipp.steiner1987@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig PRECISION_TIMING
+	bool "Precision timing infrastructure [EXPERIMENTAL]"
+	select EXPERIMENTAL
+	help
+	  Enable experimental protocol-neutral precision timing helpers for
+	  domain-qualified timestamps, clock adapters, mappings, and clock
+	  discipline.

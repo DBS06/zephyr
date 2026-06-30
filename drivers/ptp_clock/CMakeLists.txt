@@ -4,6 +4,7 @@ zephyr_syscall_header(${ZEPHYR_BASE}/include/zephyr/drivers/ptp_clock.h)
 
 zephyr_library()
 
+zephyr_library_sources_ifdef(CONFIG_PRECISION_TIMING precision_ptp_clock.c)
 zephyr_library_sources_ifdef(CONFIG_PTP_CLOCK ptp_clock.c)
 zephyr_library_sources_ifdef(CONFIG_PTP_CLOCK_SHELL ptp_clock_shell.c)
 
