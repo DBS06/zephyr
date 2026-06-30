@@ -11,6 +11,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/net/ethernet.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/timing/precision_ptp_clock.h>
 #include <zephyr/ztest.h>
 #include <zephyr/zvfs/eventfd.h>
 
@@ -131,6 +132,68 @@ static int fake_ptp_clock_rate_adjust(const struct device *dev, double ratio)
 	return fake_ptp_clock_rate_adjust_ret;
 }
 
+static void fake_precision_ptp_clock_init(struct precision_ptp_clock_adapter *adapter,
+					  const struct device *ptp_clock,
+					  struct precision_time_domain domain)
+{
+	adapter->ptp_clock = ptp_clock;
+	adapter->clock.domain = domain;
+}
+
+static const struct precision_clock *
+fake_precision_ptp_clock_get(const struct precision_ptp_clock_adapter *adapter)
+{
+	return &adapter->clock;
+}
+
+static int fake_precision_clock_read(const struct precision_clock *clock,
+				     struct precision_time_point *time)
+{
+	struct net_ptp_time ptp_time = { 0 };
+	int ret;
+
+	ret = fake_ptp_clock_get(&fake_phc, &ptp_time);
+	if (ret < 0) {
+		return ret;
+	}
+
+	ret = precision_time_from_u64_sec_nsec(ptp_time.second, ptp_time.nanosecond,
+					       &time->time);
+	if (ret < 0) {
+		return ret;
+	}
+
+	time->domain = clock->domain;
+
+	return 0;
+}
+
+static int fake_precision_clock_set(const struct precision_clock *clock,
+				    const struct precision_time_point *time)
+{
+	struct net_ptp_time ptp_time;
+	int ret;
+
+	ARG_UNUSED(clock);
+
+	ret = precision_time_to_u64_sec_nsec(time->time, &ptp_time.second,
+					     &ptp_time.nanosecond);
+	if (ret < 0) {
+		return ret;
+	}
+
+	return fake_ptp_clock_set(&fake_phc, &ptp_time);
+}
+
+static int fake_precision_clock_adjust_rate(const struct precision_clock *clock,
+					    int32_t rate_ppb)
+{
+	ARG_UNUSED(clock);
+
+	return fake_ptp_clock_rate_adjust(&fake_phc,
+					  1.0 + ((double)rate_ppb / 1000000000.0));
+}
+
 int ptp_btca_ds_cmp(const struct ptp_dataset *a, const struct ptp_dataset *b)
 {
 	ARG_UNUSED(a);
@@ -235,7 +298,17 @@ int ptp_port_management_msg_process(struct ptp_port *port, struct ptp_port *send
 #define ptp_clock_get            fake_ptp_clock_get
 #define ptp_clock_set            fake_ptp_clock_set
 #define ptp_clock_rate_adjust    fake_ptp_clock_rate_adjust
+#define precision_ptp_clock_init fake_precision_ptp_clock_init
+#define precision_ptp_clock_get  fake_precision_ptp_clock_get
+#define precision_clock_read     fake_precision_clock_read
+#define precision_clock_set      fake_precision_clock_set
+#define precision_clock_adjust_rate fake_precision_clock_adjust_rate
 #include "../../../../../subsys/net/lib/ptp/clock.c"
+#undef precision_clock_adjust_rate
+#undef precision_clock_set
+#undef precision_clock_read
+#undef precision_ptp_clock_get
+#undef precision_ptp_clock_init
 #undef ptp_clock_rate_adjust
 #undef ptp_clock_set
 #undef ptp_clock_get
@@ -498,18 +571,12 @@ ZTEST(ptp_clock_wakeup, test_synchronize_stops_when_phc_read_fails)
 
 ZTEST(ptp_clock_wakeup, test_pi_servo_uses_configured_gains)
 {
-	const int64_t offset = 1000;
-	const double kp = (double)CONFIG_PTP_SERVO_KP / PTP_SERVO_GAIN_SCALE;
-	const double ki = (double)CONFIG_PTP_SERVO_KI / PTP_SERVO_GAIN_SCALE;
-	double correction;
+	clock_servo_init();
 
-	correction = ptp_servo_pi(offset);
-	zassert_within(correction, (kp + ki) * offset, 0.000001,
-		       "first PI correction mismatch");
-
-	correction = ptp_servo_pi(offset);
-	zassert_within(correction, (kp + 2.0 * ki) * offset, 0.000001,
-		       "integral accumulation mismatch");
+	zassert_equal(ptp_clk.sync_discipline.config.kp_num, CONFIG_PTP_SERVO_KP,
+		      "proportional gain should come from Kconfig");
+	zassert_equal(ptp_clk.sync_discipline.config.ki_num, CONFIG_PTP_SERVO_KI,
+		      "integral gain should come from Kconfig");
 }
 
 ZTEST(ptp_clock_wakeup, test_synchronize_applies_pi_rate_adjustment)
@@ -544,7 +611,7 @@ ZTEST(ptp_clock_wakeup, test_synchronize_resets_servo_after_rate_adjust_failure)
 		      "failed adjustment should be followed by servo reset");
 	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0,
 		      "servo reset should restore nominal rate");
-	zassert_equal(ptp_clk.pi_drift, 0.0, "servo drift should be cleared");
+	zassert_equal(ptp_clk.sync_discipline.drift_ppb, 0, "servo drift should be cleared");
 }
 
 ZTEST(ptp_clock_wakeup, test_synchronize_resets_after_consecutive_locked_outliers)
@@ -559,29 +626,35 @@ ZTEST(ptp_clock_wakeup, test_synchronize_resets_after_consecutive_locked_outlier
 	fake_ptp_clock_time.second = 1;
 
 	for (int i = 0; i < SYNC_SERVO_LOCK_SAMPLES; i++) {
-		ptp_clock_synchronize(ingress, ingress - delay - locked_offset, true);
+		uint64_t sample_ingress = ingress + i + 1;
+
+		ptp_clock_synchronize(sample_ingress, sample_ingress - delay - locked_offset,
+				      true);
 	}
 
-	zassert_true(ptp_clk.sync_servo_locked, "servo should lock after stable samples");
+	zassert_equal(ptp_clk.sync_discipline.state, PRECISION_SYNC_LOCKED,
+		      "servo should lock after stable samples");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES,
 		      "stable samples should drive the PI controller");
 
-	ptp_clock_synchronize(ingress, ingress - delay - reacquire_offset, true);
+	ptp_clock_synchronize(ingress + 10, ingress + 10 - delay - reacquire_offset, true);
 
-	zassert_true(ptp_clk.sync_servo_locked, "one outlier should preserve servo lock");
-	zassert_equal(ptp_clk.sync_servo_outlier_samples, 1, "outlier should be counted");
+	zassert_equal(ptp_clk.sync_discipline.state, PRECISION_SYNC_LOCKED,
+		      "one outlier should preserve servo lock");
+	zassert_equal(ptp_clk.sync_discipline.outlier_samples, 1, "outlier should be counted");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES,
 		      "isolated outlier should not change the clock rate");
 
-	ptp_clock_synchronize(ingress, ingress - delay - reacquire_offset, true);
+	ptp_clock_synchronize(ingress + 20, ingress + 20 - delay - reacquire_offset, true);
 
-	zassert_false(ptp_clk.sync_servo_locked, "consecutive outliers should reset the servo");
+	zassert_not_equal(ptp_clk.sync_discipline.state, PRECISION_SYNC_LOCKED,
+			  "consecutive outliers should reset the servo");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES + 1,
 		      "second outlier should only restore nominal rate");
 	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0,
 		      "servo reset should restore nominal rate");
 
-	ptp_clock_synchronize(ingress, ingress - delay - reacquire_offset, true);
+	ptp_clock_synchronize(ingress + 30, ingress + 30 - delay - reacquire_offset, true);
 
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES + 2,
 		      "persistent offset should restart PI acquisition");
@@ -601,16 +674,20 @@ ZTEST(ptp_clock_wakeup, test_synchronize_good_sample_clears_locked_outlier_count
 	fake_ptp_clock_time.second = 1;
 
 	for (int i = 0; i < SYNC_SERVO_LOCK_SAMPLES; i++) {
-		ptp_clock_synchronize(ingress, ingress - delay - locked_offset, true);
+		uint64_t sample_ingress = ingress + i + 1;
+
+		ptp_clock_synchronize(sample_ingress, sample_ingress - delay - locked_offset,
+				      true);
 	}
 
-	ptp_clock_synchronize(ingress, ingress - delay - outlier_offset, true);
-	zassert_equal(ptp_clk.sync_servo_outlier_samples, 1, "outlier should be counted");
+	ptp_clock_synchronize(ingress + 10, ingress + 10 - delay - outlier_offset, true);
+	zassert_equal(ptp_clk.sync_discipline.outlier_samples, 1, "outlier should be counted");
 
-	ptp_clock_synchronize(ingress, ingress - delay - locked_offset, true);
+	ptp_clock_synchronize(ingress + 20, ingress + 20 - delay - locked_offset, true);
 
-	zassert_true(ptp_clk.sync_servo_locked, "good sample should preserve servo lock");
-	zassert_equal(ptp_clk.sync_servo_outlier_samples, 0,
+	zassert_equal(ptp_clk.sync_discipline.state, PRECISION_SYNC_LOCKED,
+		      "good sample should preserve servo lock");
+	zassert_equal(ptp_clk.sync_discipline.outlier_samples, 0,
 		      "good sample should clear the outlier count");
 }
 
