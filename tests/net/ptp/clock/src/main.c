@@ -220,8 +220,11 @@ static int my_ptp_clock_adjust(const struct device *dev, int increment)
 	return 0;
 }
 
-static int my_ptp_clock_rate_adjust(const struct device *dev, double ratio)
+static int my_ptp_clock_rate_adjust(const struct device *dev, int32_t ppb)
 {
+	ARG_UNUSED(dev);
+	ARG_UNUSED(ppb);
+
 	return 0;
 }
 

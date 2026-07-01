@@ -20,6 +20,8 @@
 
 LOG_MODULE_REGISTER(eth_stm32_hal_ptp, CONFIG_ETHERNET_LOG_LEVEL);
 
+#define ETH_STM32_PTP_RATE_ADJUST_SCALE_PPB 1000000000LL
+
 /* Naming of the  ETH PTP Config Status changes depending on the stm32 series */
 #if defined(CONFIG_SOC_SERIES_STM32F4X)
 #define ETH_STM32_PTP_CONFIGURED HAL_ETH_PTP_CONFIGURATED
@@ -173,25 +175,30 @@ static int ptp_clock_stm32_adjust(const struct device *dev, int increment)
 	return ret;
 }
 
-static int ptp_clock_stm32_rate_adjust(const struct device *dev, double ratio)
+static int ptp_clock_stm32_rate_adjust(const struct device *dev, int32_t ppb)
 {
 	struct ptp_context *ptp_context = dev->data;
 	struct eth_stm32_hal_dev_data *eth_dev_data = ptp_context->eth_dev_data;
 	ETH_HandleTypeDef *heth = &eth_dev_data->heth;
+	int64_t scaled_ppb = ETH_STM32_PTP_RATE_ADJUST_SCALE_PPB + ppb;
 	int key, ret;
 	uint32_t addend_val;
+	double rate_scale;
 
 	key = irq_lock();
 
 	/* Limit possible ratio */
-	if (ratio * 100 < CONFIG_ETH_STM32_HAL_PTP_CLOCK_ADJ_MIN_PCT ||
-			ratio * 100 > CONFIG_ETH_STM32_HAL_PTP_CLOCK_ADJ_MAX_PCT) {
+	if (scaled_ppb * 100 < (int64_t)CONFIG_ETH_STM32_HAL_PTP_CLOCK_ADJ_MIN_PCT *
+	    ETH_STM32_PTP_RATE_ADJUST_SCALE_PPB ||
+	    scaled_ppb * 100 > (int64_t)CONFIG_ETH_STM32_HAL_PTP_CLOCK_ADJ_MAX_PCT *
+	    ETH_STM32_PTP_RATE_ADJUST_SCALE_PPB) {
 		ret = -EINVAL;
 		goto error;
 	}
 
 	/* Update addend register */
-	addend_val = UINT32_MAX * (double)eth_dev_data->clk_ratio * ratio;
+	rate_scale = (double)scaled_ppb / ETH_STM32_PTP_RATE_ADJUST_SCALE_PPB;
+	addend_val = UINT32_MAX * (double)eth_dev_data->clk_ratio * rate_scale;
 
 #if DT_HAS_COMPAT_STATUS_OKAY(st_stm32h7_ethernet)
 	heth->Instance->MACTSAR = addend_val;

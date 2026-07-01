@@ -53,10 +53,10 @@ static int ptp_clock_adjust_native(const struct device *clk, int increment)
 	return 0;
 }
 
-static int ptp_clock_rate_adjust_native(const struct device *clk, double ratio)
+static int ptp_clock_rate_adjust_native(const struct device *clk, int32_t ppb)
 {
 	ARG_UNUSED(clk);
-	ARG_UNUSED(ratio);
+	ARG_UNUSED(ppb);
 
 	/* We cannot adjust the host device time so this function
 	 * does nothing.

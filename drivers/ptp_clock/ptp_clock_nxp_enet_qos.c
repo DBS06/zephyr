@@ -36,6 +36,7 @@ LOG_MODULE_REGISTER(ptp_clock_nxp_enet_qos);
  * 50 MHz matches ENET_QOS_SYSTIME_REQUIRED_CLK_MHZ in the NXP HAL.
  */
 #define PTP_CLOCK_NXP_ENET_QOS_PTPCLK_HZ 50000000U
+#define PTP_CLOCK_NXP_ENET_QOS_RATE_ADJUST_SCALE_PPB 1000000000LL
 
 struct ptp_clock_nxp_enet_qos_config {
 	const struct device *enet_qos_dev;	/* device of the parent ENET QoSmodule */
@@ -132,19 +133,20 @@ static int ptp_clock_nxp_enet_qos_adjust(const struct device *dev, int increment
 	return 0;
 }
 
-static int ptp_clock_nxp_enet_qos_rate_adjust(const struct device *dev, double ratio)
+static int ptp_clock_nxp_enet_qos_rate_adjust(const struct device *dev, int32_t ppb)
 {
-	LOG_DBG("PTP rate adjust ratio: %f", ratio);
+	LOG_DBG("PTP rate adjust ppb: %d", ppb);
 
 	struct ptp_clock_nxp_enet_qos_data *data = dev->data;
+	int64_t scaled_ppb = PTP_CLOCK_NXP_ENET_QOS_RATE_ADJUST_SCALE_PPB + ppb;
 	uint32_t new_addend;
 
-	/* No meaningful change */
-	if ((ratio > 1.0 && ratio - 1.0 < 1e-9) || (ratio < 1.0 && 1.0 - ratio < 1e-9)) {
-		return 0;
+	if (scaled_ppb <= 0) {
+		return -EINVAL;
 	}
 
-	new_addend = (uint32_t)((double)data->nominal_addend * ratio);
+	new_addend = (uint32_t)(((uint64_t)data->nominal_addend * (uint64_t)scaled_ppb) /
+				PTP_CLOCK_NXP_ENET_QOS_RATE_ADJUST_SCALE_PPB);
 
 	k_mutex_lock(&data->ptp_mutex, K_FOREVER);
 

@@ -820,6 +820,14 @@ Ethernet
 PTP
 ===
 
+* The :c:func:`ptp_clock_rate_adjust` driver API now takes a signed ``int32_t ppb``
+  frequency correction instead of a floating-point nominal-frequency ratio.
+  Driver implementations should treat ``0`` as nominal frequency, positive values
+  as speeding the PHC up, and negative values as slowing it down. Out-of-tree
+  drivers implementing :c:struct:`ptp_clock_driver_api` must update their
+  ``rate_adjust`` callback signature and convert ppb values to any hardware-specific
+  addend, increment, or correction format internally.
+
 * The PTP UDP protocol Kconfig symbols have been renamed for consistent capitalization:
 
   * :kconfig:option:`CONFIG_PTP_UDP_IPv4_PROTOCOL` to

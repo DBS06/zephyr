@@ -18,6 +18,9 @@
 
 #include <fsl_enet.h>
 
+#define PTP_CLOCK_NXP_ENET_RATE_ADJUST_NOOP_PPB 10LL
+#define PTP_CLOCK_NXP_ENET_RATE_ADJUST_SCALE_PPB 1000000000LL
+
 struct ptp_clock_nxp_enet_config {
 	const struct pinctrl_dev_config *pincfg;
 	const struct device *module_dev;
@@ -90,13 +93,14 @@ static int ptp_clock_nxp_enet_adjust(const struct device *dev,
 }
 
 static int ptp_clock_nxp_enet_rate_adjust(const struct device *dev,
-					double ratio)
+					int32_t ppb)
 {
 	const struct ptp_clock_nxp_enet_config *config = dev->config;
 	struct ptp_clock_nxp_enet_data *data = dev->data;
 	int corr;
 	int32_t mul;
-	double val;
+	int64_t abs_ppb = ppb < 0 ? -(int64_t)ppb : ppb;
+	int64_t val;
 	uint32_t enet_ref_pll_rate;
 
 	(void) clock_control_get_rate(config->clock_dev, config->clock_subsys,
@@ -104,23 +108,21 @@ static int ptp_clock_nxp_enet_rate_adjust(const struct device *dev,
 	int hw_inc = NSEC_PER_SEC / enet_ref_pll_rate;
 
 	/* No change needed. */
-	if ((ratio > 1.0 && ratio - 1.0 < 0.00000001) ||
-	   (ratio < 1.0 && 1.0 - ratio < 0.00000001)) {
+	if (ppb != 0 && abs_ppb < PTP_CLOCK_NXP_ENET_RATE_ADJUST_NOOP_PPB) {
 		return 0;
 	}
 
 	/* Limit possible ratio. */
-	if ((ratio > 1.0 + 1.0/(2 * hw_inc)) ||
-			(ratio < 1.0 - 1.0/(2 * hw_inc))) {
+	if (abs_ppb > PTP_CLOCK_NXP_ENET_RATE_ADJUST_SCALE_PPB / (2 * hw_inc)) {
 		return -EINVAL;
 	}
 
-	if (ratio < 1.0) {
+	if (ppb < 0) {
 		corr = hw_inc - 1;
-		val = 1.0 / (hw_inc * (1.0 - ratio));
-	} else if (ratio > 1.0) {
+		val = PTP_CLOCK_NXP_ENET_RATE_ADJUST_SCALE_PPB / (hw_inc * abs_ppb);
+	} else if (ppb > 0) {
 		corr = hw_inc + 1;
-		val = 1.0 / (hw_inc * (ratio - 1.0));
+		val = PTP_CLOCK_NXP_ENET_RATE_ADJUST_SCALE_PPB / (hw_inc * abs_ppb);
 	} else {
 		val = 0;
 		corr = hw_inc;

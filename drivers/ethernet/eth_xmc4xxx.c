@@ -92,8 +92,9 @@ LOG_MODULE_REGISTER(eth_xmc4xxx);
 #define ETH_LINK_DUPLEX_FULL 1
 
 #define ETH_PTP_CLOCK_FREQUENCY       50000000
-#define ETH_PTP_RATE_ADJUST_RATIO_MIN 0.9
-#define ETH_PTP_RATE_ADJUST_RATIO_MAX 1.1
+#define ETH_PTP_RATE_ADJUST_PPB_MIN   -100000000
+#define ETH_PTP_RATE_ADJUST_PPB_MAX   100000000
+#define ETH_PTP_RATE_ADJUST_SCALE_PPB 1000000000LL
 
 struct eth_xmc4xxx_data {
 	struct net_if *iface;
@@ -1326,18 +1327,20 @@ static int eth_xmc4xxx_ptp_clock_adjust(const struct device *dev, int increment)
 	return 0;
 }
 
-static int eth_xmc4xxx_ptp_clock_rate_adjust(const struct device *dev, double ratio)
+static int eth_xmc4xxx_ptp_clock_rate_adjust(const struct device *dev, int32_t ppb)
 {
 	const struct eth_xmc4xxx_config *dev_cfg = dev->config;
 	struct eth_xmc4xxx_data *dev_data = dev->data;
 	uint64_t K = dev_data->timestamp_addend;
+	int64_t scaled_ppb = ETH_PTP_RATE_ADJUST_SCALE_PPB + ppb;
 
-	if (ratio < ETH_PTP_RATE_ADJUST_RATIO_MIN || ratio > ETH_PTP_RATE_ADJUST_RATIO_MAX) {
+	if (ppb < ETH_PTP_RATE_ADJUST_PPB_MIN || ppb > ETH_PTP_RATE_ADJUST_PPB_MAX) {
 		return -EINVAL;
 	}
 
 	/* f_out = f_cpu * K / 2^32, where K = TIMESTAMP_ADDEND. Target F_out = 50MHz  */
-	K = K * ratio + 0.5;
+	K = (K * (uint64_t)scaled_ppb + (ETH_PTP_RATE_ADJUST_SCALE_PPB / 2)) /
+	    ETH_PTP_RATE_ADJUST_SCALE_PPB;
 	if (K > UINT32_MAX) {
 		return -EINVAL;
 	}

@@ -125,9 +125,9 @@ static inline uint64_t gptp_timestamp_to_nsec(struct net_ptp_time *ts)
  *
  * @param nanosecond_diff nanosecond offset.
  *
- * @return ppb value to adjust.
+ * @return signed ppb value to adjust.
  */
-double gptp_servo_pi(int64_t nanosecond_diff);
+int32_t gptp_servo_pi(int64_t nanosecond_diff);
 
 /**
  * @brief Change the port state

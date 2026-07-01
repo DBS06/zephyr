@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <stdint.h>
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(net_gptp, CONFIG_NET_GPTP_LOG_LEVEL);
 
@@ -922,7 +924,7 @@ int gptp_get_port_data(struct gptp_domain *domain,
 	return 0;
 }
 
-double gptp_servo_pi(int64_t nanosecond_diff)
+int32_t gptp_servo_pi(int64_t nanosecond_diff)
 {
 	double kp = 0.7;
 	double ki = 0.3;
@@ -931,7 +933,19 @@ double gptp_servo_pi(int64_t nanosecond_diff)
 	gptp_clock.pi_drift += ki * nanosecond_diff;
 	ppb = kp * nanosecond_diff + gptp_clock.pi_drift;
 
-	return ppb;
+	if (ppb > INT32_MAX) {
+		return INT32_MAX;
+	}
+
+	if (ppb < INT32_MIN) {
+		return INT32_MIN;
+	}
+
+	if (ppb < 0.0) {
+		return (int32_t)(ppb - 0.5);
+	}
+
+	return (int32_t)(ppb + 0.5);
 }
 
 static void init_ports(void)

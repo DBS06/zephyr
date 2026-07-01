@@ -829,12 +829,12 @@ static void gptp_update_local_port_clock(void)
 	skip_clock_set:
 		irq_unlock(key);
 	} else {
-		double ppb = gptp_servo_pi(nanosecond_diff);
+		int32_t ppb = gptp_servo_pi(nanosecond_diff);
 
-		ptp_clock_rate_adjust(clk, 1.0 + (ppb / 1000000000.0));
+		ptp_clock_rate_adjust(clk, ppb);
 
 		if (IS_ENABLED(CONFIG_NET_GPTP_MONITOR_SYNC_STATUS)) {
-			NET_INFO("sync offset %9"PRId64" ns, freq offset %f ppb",
+			NET_INFO("sync offset %9" PRId64 " ns, freq offset %" PRId32 " ppb",
 				 nanosecond_diff, ppb);
 		}
 	}

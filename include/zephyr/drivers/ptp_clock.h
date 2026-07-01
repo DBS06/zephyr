@@ -39,7 +39,7 @@ __subsystem struct ptp_clock_driver_api {
 	int (*set)(const struct device *dev, struct net_ptp_time *tm);
 	int (*get)(const struct device *dev, struct net_ptp_time *tm);
 	int (*adjust)(const struct device *dev, int increment);
-	int (*rate_adjust)(const struct device *dev, double ratio);
+	int (*rate_adjust)(const struct device *dev, int32_t ppb);
 };
 
 /**
@@ -86,16 +86,17 @@ static inline int ptp_clock_adjust(const struct device *dev, int increment)
 }
 
 /**
- * @brief Adjust the PTP clock rate ratio based on its nominal frequency
+ * @brief Adjust the PTP clock rate based on its nominal frequency.
  *
  * @param dev PTP clock device
- * @param rate Rate ratio based on its nominal frequency
+ * @param ppb Signed frequency correction in parts per billion. Use 0 for nominal frequency,
+ *            positive values to speed the clock up, and negative values to slow it down.
  *
  * @return 0 if ok, <0 if error
  */
-static inline int ptp_clock_rate_adjust(const struct device *dev, double rate)
+static inline int ptp_clock_rate_adjust(const struct device *dev, int32_t ppb)
 {
-	return DEVICE_API_GET(ptp_clock, dev)->rate_adjust(dev, rate);
+	return DEVICE_API_GET(ptp_clock, dev)->rate_adjust(dev, ppb);
 }
 
 #ifdef __cplusplus

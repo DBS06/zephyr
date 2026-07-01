@@ -36,7 +36,7 @@ static int fake_ptp_clock_get_ret;
 static int fake_ptp_clock_get_second_ret;
 static int fake_ptp_clock_set_ret;
 static int fake_ptp_clock_rate_adjust_ret;
-static double fake_ptp_clock_last_rate_ratio;
+static int32_t fake_ptp_clock_last_rate_ppb;
 static struct net_ptp_time fake_ptp_clock_time;
 static struct net_ptp_time fake_ptp_clock_last_set_time;
 static int port_management_error_calls;
@@ -121,12 +121,12 @@ static int fake_ptp_clock_set(const struct device *dev, struct net_ptp_time *tm)
 	return fake_ptp_clock_set_ret;
 }
 
-static int fake_ptp_clock_rate_adjust(const struct device *dev, double ratio)
+static int fake_ptp_clock_rate_adjust(const struct device *dev, int32_t ppb)
 {
 	ARG_UNUSED(dev);
 
 	fake_ptp_clock_rate_adjust_calls++;
-	fake_ptp_clock_last_rate_ratio = ratio;
+	fake_ptp_clock_last_rate_ppb = ppb;
 
 	return fake_ptp_clock_rate_adjust_ret;
 }
@@ -264,7 +264,7 @@ static void reset_clock_state(void)
 	fake_ptp_clock_get_second_ret = 0;
 	fake_ptp_clock_set_ret = 0;
 	fake_ptp_clock_rate_adjust_ret = 0;
-	fake_ptp_clock_last_rate_ratio = 0.0;
+	fake_ptp_clock_last_rate_ppb = 0;
 	memset(&fake_ptp_clock_time, 0, sizeof(fake_ptp_clock_time));
 	memset(&fake_ptp_clock_last_set_time, 0, sizeof(fake_ptp_clock_last_set_time));
 	port_management_error_calls = 0;
@@ -501,15 +501,16 @@ ZTEST(ptp_clock_wakeup, test_pi_servo_uses_configured_gains)
 	const int64_t offset = 1000;
 	const double kp = (double)CONFIG_PTP_SERVO_KP / PTP_SERVO_GAIN_SCALE;
 	const double ki = (double)CONFIG_PTP_SERVO_KI / PTP_SERVO_GAIN_SCALE;
-	double correction;
+	int32_t correction;
+	int32_t expected;
 
+	expected = (int32_t)(((kp + ki) * offset) + 0.5);
 	correction = ptp_servo_pi(offset);
-	zassert_within(correction, (kp + ki) * offset, 0.000001,
-		       "first PI correction mismatch");
+	zassert_equal(correction, expected, "first PI correction mismatch");
 
+	expected = (int32_t)(((kp + 2.0 * ki) * offset) + 0.5);
 	correction = ptp_servo_pi(offset);
-	zassert_within(correction, (kp + 2.0 * ki) * offset, 0.000001,
-		       "integral accumulation mismatch");
+	zassert_equal(correction, expected, "integral accumulation mismatch");
 }
 
 ZTEST(ptp_clock_wakeup, test_synchronize_applies_pi_rate_adjustment)
@@ -527,7 +528,33 @@ ZTEST(ptp_clock_wakeup, test_synchronize_applies_pi_rate_adjustment)
 		      "offset mismatch");
 	zassert_equal(fake_ptp_clock_set_calls, 0, "small offset should not hard-step");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, 1, "rate adjust should be applied");
-	zassert_true(fake_ptp_clock_last_rate_ratio < 1.0, "positive offset should slow clock");
+	zassert_true(fake_ptp_clock_last_rate_ppb < 0, "positive offset should slow clock");
+}
+
+ZTEST(ptp_clock_wakeup, test_synchronize_applies_positive_ppb_for_negative_offset)
+{
+	ptp_clk.phc = &fake_phc;
+	ptp_clk.current_ds.mean_delay = (ptp_timeinterval)100 << 16;
+	fake_ptp_clock_time.second = 0;
+	fake_ptp_clock_time.nanosecond = 10000;
+
+	ptp_clock_synchronize(10000, 9950, true);
+
+	zassert_equal(fake_ptp_clock_rate_adjust_calls, 1, "rate adjust should be applied");
+	zassert_true(fake_ptp_clock_last_rate_ppb > 0, "negative offset should speed clock");
+}
+
+ZTEST(ptp_clock_wakeup, test_synchronize_applies_zero_ppb_for_zero_offset)
+{
+	ptp_clk.phc = &fake_phc;
+	ptp_clk.current_ds.mean_delay = (ptp_timeinterval)100 << 16;
+	fake_ptp_clock_time.second = 0;
+	fake_ptp_clock_time.nanosecond = 10000;
+
+	ptp_clock_synchronize(10000, 9900, true);
+
+	zassert_equal(fake_ptp_clock_rate_adjust_calls, 1, "rate adjust should be applied");
+	zassert_equal(fake_ptp_clock_last_rate_ppb, 0, "zero offset should use nominal rate");
 }
 
 ZTEST(ptp_clock_wakeup, test_synchronize_resets_servo_after_rate_adjust_failure)
@@ -542,7 +569,7 @@ ZTEST(ptp_clock_wakeup, test_synchronize_resets_servo_after_rate_adjust_failure)
 
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, 2,
 		      "failed adjustment should be followed by servo reset");
-	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0,
+	zassert_equal(fake_ptp_clock_last_rate_ppb, 0,
 		      "servo reset should restore nominal rate");
 	zassert_equal(ptp_clk.pi_drift, 0.0, "servo drift should be cleared");
 }
@@ -578,14 +605,14 @@ ZTEST(ptp_clock_wakeup, test_synchronize_resets_after_consecutive_locked_outlier
 	zassert_false(ptp_clk.sync_servo_locked, "consecutive outliers should reset the servo");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES + 1,
 		      "second outlier should only restore nominal rate");
-	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0,
+	zassert_equal(fake_ptp_clock_last_rate_ppb, 0,
 		      "servo reset should restore nominal rate");
 
 	ptp_clock_synchronize(ingress, ingress - delay - reacquire_offset, true);
 
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES + 2,
 		      "persistent offset should restart PI acquisition");
-	zassert_not_equal(fake_ptp_clock_last_rate_ratio, 1.0,
+	zassert_not_equal(fake_ptp_clock_last_rate_ppb, 0,
 			  "reacquisition should apply a frequency correction");
 }
 
@@ -633,7 +660,7 @@ ZTEST(ptp_clock_wakeup, test_synchronize_hard_steps_large_offset_and_resets_dela
 	zassert_equal(ptp_clk.current_ds.mean_delay, 0, "hard step should reset mean delay");
 	zassert_equal(ptp_clk.timestamp.t1, 0, "hard step should clear timestamps");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, 1, "hard step should reset servo rate");
-	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0, "servo reset should use nominal rate");
+	zassert_equal(fake_ptp_clock_last_rate_ppb, 0, "servo reset should use nominal rate");
 }
 
 ZTEST(ptp_clock_wakeup, test_synchronize_stops_when_hard_step_phc_read_fails)

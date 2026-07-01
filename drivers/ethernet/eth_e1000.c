@@ -23,6 +23,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <zephyr/drivers/ptp_clock.h>
 
 #define PTP_INST_NODEID(n) DT_INST_CHILD(n, ptp)
+#define ETH_E1000_PTP_RATE_ADJUST_SCALE_PPB 1000000000LL
 #endif
 
 #if defined(CONFIG_ETH_E1000_VERBOSE_DEBUG)
@@ -391,27 +392,27 @@ static int ptp_clock_e1000_adjust(const struct device *dev, int increment)
 	return 0;
 }
 
-static int ptp_clock_e1000_rate_adjust(const struct device *dev, double ratio)
+static int ptp_clock_e1000_rate_adjust(const struct device *dev, int32_t ppb)
 {
 	const int hw_inc = NSEC_PER_SEC / CONFIG_ETH_E1000_PTP_CLOCK_SRC_HZ;
-	struct ptp_context *ptp_context = dev->data;
-	struct e1000_dev *context = ptp_context->eth_context;
 	int corr;
 	int32_t mul;
-	float val;
+	int64_t abs_ppb = ppb < 0 ? -(int64_t)ppb : ppb;
+	int64_t val;
+
+	ARG_UNUSED(dev);
 
 	/* Limit possible ratio. */
-	if ((ratio > 1.0 + 1.0/(2.0 * hw_inc)) ||
-			(ratio < 1.0 - 1.0/(2.0 * hw_inc))) {
+	if (abs_ppb > ETH_E1000_PTP_RATE_ADJUST_SCALE_PPB / (2 * hw_inc)) {
 		return -EINVAL;
 	}
 
-	if (ratio < 1.0) {
+	if (ppb < 0) {
 		corr = hw_inc - 1;
-		val = 1.0 / (hw_inc * (1.0 - ratio));
-	} else if (ratio > 1.0) {
+		val = ETH_E1000_PTP_RATE_ADJUST_SCALE_PPB / (hw_inc * abs_ppb);
+	} else if (ppb > 0) {
 		corr = hw_inc + 1;
-		val = 1.0 / (hw_inc * (ratio - 1.0));
+		val = ETH_E1000_PTP_RATE_ADJUST_SCALE_PPB / (hw_inc * abs_ppb);
 	} else {
 		val = 0;
 		corr = hw_inc;
@@ -425,6 +426,9 @@ static int ptp_clock_e1000_rate_adjust(const struct device *dev, double ratio)
 	} else {
 		mul = val;
 	}
+
+	ARG_UNUSED(corr);
+	ARG_UNUSED(mul);
 
 	/* TODO: Adjust the clock here */
 

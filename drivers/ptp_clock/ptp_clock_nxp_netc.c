@@ -86,12 +86,12 @@ static int ptp_clock_nxp_netc_adjust(const struct device *dev,
 }
 
 static int ptp_clock_nxp_netc_rate_adjust(const struct device *dev,
-					double ratio)
+					int32_t ppb)
 {
 	struct ptp_clock_nxp_netc_data *data = dev->data;
 	netc_timer_config_t *ptp_config = &data->ptp_config;
 
-	ptp_config->defaultPpb = (ratio - 1.0) * 1000000000LL;
+	ptp_config->defaultPpb = ppb;
 
 	k_mutex_lock(&data->ptp_mutex, K_FOREVER);
 

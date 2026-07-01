@@ -541,7 +541,7 @@ int ptp_clock_management_msg_process(struct ptp_port *port, struct ptp_msg *msg)
 	return state_decision_required;
 }
 
-static double ptp_servo_pi(int64_t nanosecond_diff)
+static int32_t ptp_servo_pi(int64_t nanosecond_diff)
 {
 	const double kp = (double)CONFIG_PTP_SERVO_KP / PTP_SERVO_GAIN_SCALE;
 	const double ki = (double)CONFIG_PTP_SERVO_KI / PTP_SERVO_GAIN_SCALE;
@@ -550,7 +550,19 @@ static double ptp_servo_pi(int64_t nanosecond_diff)
 	ptp_clk.pi_drift += ki * nanosecond_diff;
 	ppb = kp * nanosecond_diff + ptp_clk.pi_drift;
 
-	return ppb;
+	if (ppb > INT32_MAX) {
+		return INT32_MAX;
+	}
+
+	if (ppb < INT32_MIN) {
+		return INT32_MIN;
+	}
+
+	if (ppb < 0.0) {
+		return (int32_t)(ppb - 0.5);
+	}
+
+	return (int32_t)(ppb + 0.5);
 }
 
 static void clock_servo_reset(void)
@@ -562,7 +574,7 @@ static void clock_servo_reset(void)
 	ptp_clk.sync_servo_outlier_samples = 0;
 	ptp_clk.sync_servo_locked = false;
 
-	ret = ptp_clock_rate_adjust(ptp_clk.phc, 1.0);
+	ret = ptp_clock_rate_adjust(ptp_clk.phc, 0);
 	if (ret < 0) {
 		LOG_WRN("Failed to reset PHC rate to nominal (err %d)", ret);
 	}
@@ -626,7 +638,7 @@ static void clock_update_neighbor_rate_ratio(struct ptp_port *port, int64_t resp
 static void clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
 					 ptp_timeinterval mean_delay, bool ingress_ts_valid)
 {
-	double ppb;
+	int32_t ppb;
 	int64_t offset;
 	int ret;
 	int64_t delay = mean_delay >> 16;
@@ -732,9 +744,9 @@ static void clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
 	ptp_clk.sync_servo_outlier_samples = 0;
 
 	ppb = ptp_servo_pi(-offset);
-	ret = ptp_clock_rate_adjust(ptp_clk.phc, 1.0 + (ppb / 1000000000.0));
+	ret = ptp_clock_rate_adjust(ptp_clk.phc, ppb);
 	if (ret < 0) {
-		LOG_WRN("Failed to adjust PHC rate for offset %lldns (ppb=%f err %d), "
+		LOG_WRN("Failed to adjust PHC rate for offset %lldns (ppb=%" PRId32 " err %d), "
 			"resetting servo",
 			offset, ppb, ret);
 		clock_servo_reset();
