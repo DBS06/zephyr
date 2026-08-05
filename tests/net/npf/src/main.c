@@ -348,6 +348,54 @@ ZTEST(net_pkt_filter_test_suite, test_npf_example2)
 }
 
 /*
+ * Packet priority rules for untagged and single-VLAN PTP traffic.
+ */
+
+static NPF_ETH_TYPE_MATCH(ptp_packet, NET_ETH_PTYPE_PTP);
+static NPF_ETH_TYPE_MATCH(vlan_packet, NET_ETH_PTYPE_VLAN);
+static NPF_ETH_VLAN_TYPE_MATCH(vlan_ptp_packet, NET_ETH_PTYPE_PTP);
+
+static NPF_PRIORITY(ptp_priority, NET_PRIORITY_CA, ptp_packet);
+static NPF_PRIORITY(vlan_ptp_priority, NET_PRIORITY_CA, vlan_packet, vlan_ptp_packet);
+
+ZTEST(net_pkt_filter_test_suite, test_npf_ptp_priority)
+{
+	struct net_eth_vlan_hdr *vlan_hdr;
+	struct net_pkt *pkt;
+
+	npf_append_recv_rule(&ptp_priority);
+	npf_append_recv_rule(&vlan_ptp_priority);
+	npf_append_recv_rule(&npf_default_ok);
+
+	pkt = build_test_pkt(NET_ETH_PTYPE_PTP, 100, NULL);
+	zassert_true(net_pkt_filter_recv_ok(pkt), "");
+	zassert_equal(net_pkt_priority(pkt), NET_PRIORITY_CA, "");
+	net_pkt_unref(pkt);
+
+	pkt = build_vlan_test_pkt(NET_ETH_PTYPE_PTP, 100, NULL);
+	zassert_true(net_pkt_filter_recv_ok(pkt), "");
+	zassert_equal(net_pkt_priority(pkt), NET_PRIORITY_CA, "");
+	net_pkt_unref(pkt);
+
+	pkt = build_test_pkt(NET_ETH_PTYPE_IP, 100, NULL);
+	net_pkt_set_priority(pkt, NET_PRIORITY_EE);
+	zassert_true(net_pkt_filter_recv_ok(pkt), "");
+	zassert_equal(net_pkt_priority(pkt), NET_PRIORITY_EE, "");
+	net_pkt_unref(pkt);
+
+	/* The inner type must not match without an outer VLAN EtherType. */
+	pkt = build_test_pkt(NET_ETH_PTYPE_IP, 100, NULL);
+	vlan_hdr = (struct net_eth_vlan_hdr *)NET_ETH_HDR(pkt);
+	vlan_hdr->type = net_htons(NET_ETH_PTYPE_PTP);
+	net_pkt_set_priority(pkt, NET_PRIORITY_EE);
+	zassert_true(net_pkt_filter_recv_ok(pkt), "");
+	zassert_equal(net_pkt_priority(pkt), NET_PRIORITY_EE, "");
+	net_pkt_unref(pkt);
+
+	zassert_true(npf_remove_all_recv_rules(), "");
+}
+
+/*
  * Ethernet MAC address filtering
  */
 

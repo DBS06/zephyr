@@ -10,15 +10,33 @@ LOG_MODULE_REGISTER(net_ptp_sample, LOG_LEVEL_DBG);
 
 #include <zephyr/kernel.h>
 
+#include <zephyr/net/ethernet.h>
+#include <zephyr/net/net_pkt_filter.h>
+
 #include <errno.h>
 #include <stdlib.h>
 
 #include "ptp/clock.h"
 #include "ptp/port.h"
 
+static NPF_ETH_TYPE_MATCH(match_ptp, NET_ETH_PTYPE_PTP);
+static NPF_ETH_TYPE_MATCH(match_vlan, NET_ETH_PTYPE_VLAN);
+static NPF_ETH_VLAN_TYPE_MATCH(match_vlan_ptp, NET_ETH_PTYPE_PTP);
+
+static NPF_PRIORITY(ptp_rx_prio, NET_PRIORITY_CA, match_ptp);
+static NPF_PRIORITY(ptp_vlan_rx_prio, NET_PRIORITY_CA,
+		    match_vlan, match_vlan_ptp);
+
 static int run_duration = CONFIG_NET_SAMPLE_RUN_DURATION;
 static struct k_work_delayable stop_sample;
 static struct k_sem quit_lock;
+
+static void init_rx_priority(void)
+{
+	npf_append_recv_rule(&ptp_rx_prio);
+	npf_append_recv_rule(&ptp_vlan_rx_prio);
+	npf_append_recv_rule(&npf_default_ok);
+}
 
 static void stop_handler(struct k_work *work)
 {
@@ -101,6 +119,7 @@ void init_testing(void)
 
 int main(void)
 {
+	init_rx_priority();
 	init_testing();
 	return 0;
 }
