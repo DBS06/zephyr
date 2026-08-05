@@ -18,6 +18,8 @@ static const char *rule_type2str(enum npf_rule_type type)
 	switch (type) {
 	case NPF_RULE_TYPE_SEND:
 		return "send";
+	case NPF_RULE_TYPE_RECV_PRIORITY:
+		return "recv prio";
 	case NPF_RULE_TYPE_RECV:
 		return "recv";
 	case NPF_RULE_TYPE_LOCAL_IN_RECV:

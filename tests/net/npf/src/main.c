@@ -174,6 +174,11 @@ static NPF_ORIG_IFACE_UNMATCH(unmatch_orig_iface_b, dummy_iface_b);
 static NPF_RULE(accept_orig_iface_a, NET_OK, match_orig_iface_a);
 static NPF_RULE(accept_all_but_orig_iface_b, NET_OK, unmatch_orig_iface_b);
 
+static NPF_PRIORITY(priority_iface_a_ca, NET_PRIORITY_CA, match_iface_a);
+static NPF_PRIORITY(priority_iface_a_nc, NET_PRIORITY_NC, match_iface_a);
+static NPF_ETH_TYPE_MATCH(priority_ip_packet, NET_ETH_PTYPE_IP);
+static NPF_PRIORITY(priority_ip_ca, NET_PRIORITY_CA, priority_ip_packet);
+
 static void *test_npf_iface(void)
 {
 	struct net_pkt *pkt_iface_a, *pkt_iface_b;
@@ -274,6 +279,72 @@ ZTEST(net_pkt_filter_test_suite, test_npf_orig_iface)
 
 	net_pkt_unref(pkt_iface_a);
 	net_pkt_unref(pkt_iface_b);
+}
+
+ZTEST(net_pkt_filter_test_suite, test_npf_recv_priority_only)
+{
+	struct net_pkt *pkt_iface_a = build_test_pkt(0, 200, dummy_iface_a);
+	struct net_pkt *pkt_iface_b = build_test_pkt(0, 200, dummy_iface_b);
+
+	net_pkt_set_priority(pkt_iface_a, NET_PRIORITY_BE);
+	net_pkt_set_priority(pkt_iface_b, NET_PRIORITY_EE);
+
+	npf_append_recv_priority_rule(&priority_iface_a_ca);
+
+	zassert_true(net_pkt_filter_recv_ok(pkt_iface_a), "");
+	zassert_equal(net_pkt_priority(pkt_iface_a), NET_PRIORITY_CA, "");
+	zassert_true(net_pkt_filter_recv_ok(pkt_iface_b), "");
+	zassert_equal(net_pkt_priority(pkt_iface_b), NET_PRIORITY_EE, "");
+
+	zassert_true(npf_remove_recv_priority_rule(&priority_iface_a_ca), "");
+	zassert_false(npf_remove_recv_priority_rule(&priority_iface_a_ca), "");
+	zassert_false(npf_remove_all_recv_priority_rules(), "");
+
+	net_pkt_unref(pkt_iface_a);
+	net_pkt_unref(pkt_iface_b);
+}
+
+ZTEST(net_pkt_filter_test_suite, test_npf_recv_priority_verdict_composition)
+{
+	struct net_pkt *pkt_iface_a = build_test_pkt(NET_ETH_PTYPE_IP, 200, dummy_iface_a);
+	struct net_pkt *pkt_iface_b = build_test_pkt(NET_ETH_PTYPE_IP, 200, dummy_iface_b);
+
+	npf_append_recv_priority_rule(&priority_ip_ca);
+	npf_append_recv_rule(&accept_iface_a);
+	npf_append_recv_rule(&npf_default_drop);
+
+	zassert_true(net_pkt_filter_recv_ok(pkt_iface_a), "");
+	zassert_equal(net_pkt_priority(pkt_iface_a), NET_PRIORITY_CA, "");
+	zassert_false(net_pkt_filter_recv_ok(pkt_iface_b), "");
+	zassert_equal(net_pkt_priority(pkt_iface_b), NET_PRIORITY_CA, "");
+
+	zassert_true(npf_remove_all_recv_priority_rules(), "");
+	zassert_true(npf_remove_all_recv_rules(), "");
+
+	net_pkt_unref(pkt_iface_a);
+	net_pkt_unref(pkt_iface_b);
+}
+
+ZTEST(net_pkt_filter_test_suite, test_npf_recv_priority_order)
+{
+	struct net_pkt *pkt = build_test_pkt(0, 200, dummy_iface_a);
+
+	npf_append_recv_priority_rule(&priority_iface_a_ca);
+	npf_append_recv_priority_rule(&priority_iface_a_nc);
+
+	zassert_true(net_pkt_filter_recv_ok(pkt), "");
+	zassert_equal(net_pkt_priority(pkt), NET_PRIORITY_NC, "");
+
+	zassert_true(npf_remove_all_recv_priority_rules(), "");
+
+	npf_append_recv_priority_rule(&priority_iface_a_ca);
+	npf_insert_recv_priority_rule(&priority_iface_a_nc);
+
+	zassert_true(net_pkt_filter_recv_ok(pkt), "");
+	zassert_equal(net_pkt_priority(pkt), NET_PRIORITY_CA, "");
+
+	zassert_true(npf_remove_all_recv_priority_rules(), "");
+	net_pkt_unref(pkt);
 }
 
 /*

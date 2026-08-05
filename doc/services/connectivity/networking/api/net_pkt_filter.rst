@@ -12,9 +12,9 @@ Overview
 
 The Network Packet Filtering facility provides the infrastructure to
 construct custom rules for accepting and/or denying packet transmission
-and reception. It also allows to modify the priority of incoming
-network packets. This can be used to create a basic firewall, control network
-traffic, etc.
+and reception. It also allows the priority of incoming network packets to be
+modified independently of their accept or drop verdict. This can be used to
+create a basic firewall, control network traffic, etc.
 
 The :kconfig:option:`CONFIG_NET_PKT_FILTER` must be set in order to enable the
 relevant APIs.
@@ -34,6 +34,13 @@ outcome is not yet determined and processing continues. If all conditions of
 multiple rules are true, then the packet gets the priority of the rule last
 considered.
 
+Incoming Layer 2 priority rules can instead be installed in a dedicated list
+with :c:func:`npf_insert_recv_priority_rule()` and
+:c:func:`npf_append_recv_priority_rule()`. This list is evaluated before the
+incoming verdict list. Its rules can update packet priority but never accept or
+drop packets, so subsystem and application priority rules can be composed with
+application-owned receive verdict rules.
+
 A rule is represented by a :c:struct:`npf_rule` object. It can be inserted to,
 appended to or removed from a rule list contained in a
 :c:struct:`npf_rule_list` object using :c:func:`npf_insert_rule()`,
@@ -47,7 +54,10 @@ The rule support for different layers can be controlled by relevant Kconfig opti
 mentioned below.
 
 * ``npf_send_rules`` is a rule list applied to outgoing packets in L2 layer
-* ``npf_recv_rules`` is a rule list applied to incoming packets in L2 layer
+* The receive priority rule list is applied to incoming packets in L2 layer
+  before ``npf_recv_rules`` and is managed with the dedicated receive priority
+  rule functions.
+* ``npf_recv_rules`` is a verdict rule list applied to incoming packets in L2 layer
 * ``npf_ipv4_recv_rules`` is a rule list applied for incoming IPv4 packets. Can be
   enabled or disabled by :kconfig:option:`CONFIG_NET_PKT_FILTER_IPV4_HOOK` option.
 * ``npf_ipv6_recv_rules`` is a rule list applied for incoming IPv6 packets. Can be
@@ -55,10 +65,12 @@ mentioned below.
 * ``npf_local_in_recv_rules`` is a rule list applied for incoming UDP or TCP packets.
   Can be enabled or disabled by :kconfig:option:`CONFIG_NET_PKT_FILTER_LOCAL_IN_HOOK` option.
 
-If a filter rule list is empty then ``NET_OK`` is assumed. If a non-empty
-rule list runs to the end then ``NET_DROP`` is assumed. However it is
+If a verdict rule list is empty then ``NET_OK`` is assumed. If a non-empty
+verdict rule list runs to the end then ``NET_DROP`` is assumed. However it is
 recommended to always terminate a non-empty rule list with an explicit
 default termination rule, either ``npf_default_ok`` or ``npf_default_drop``.
+The receive priority list does not need a termination rule because it never
+determines a packet verdict.
 
 Rule conditions are represented by a :c:struct:`npf_test`. This structure
 can be embedded into a larger structure when a specific condition requires
@@ -138,11 +150,10 @@ accordance with the standard 802.1Q and depends on the
     static NPF_PRIORITY(priority_nc, NET_PRIORITY_NC, is_ptp);
 
     void install_my_filter(void) {
-        npf_append_recv_rule(&priority_bk);
-        npf_append_recv_rule(&priority_ee);
-        npf_append_recv_rule(&priority_ca);
-        npf_append_recv_rule(&priority_nc);
-        npf_append_recv_rule(&npf_default_ok);
+        npf_append_recv_priority_rule(&priority_bk);
+        npf_append_recv_priority_rule(&priority_ee);
+        npf_append_recv_priority_rule(&priority_ca);
+        npf_append_recv_priority_rule(&priority_nc);
     }
 
 API Reference

@@ -26,6 +26,11 @@ struct npf_rule_list npf_recv_rules = {
 	.lock = { },
 };
 
+static struct npf_rule_list npf_recv_priority_rules = {
+	.rule_head = SYS_SLIST_STATIC_INIT(&recv_priority_rules.rule_head),
+	.lock = {},
+};
+
 #ifdef CONFIG_NET_PKT_FILTER_LOCAL_IN_HOOK
 struct npf_rule_list npf_local_in_recv_rules = {
 	.rule_head = SYS_SLIST_STATIC_INIT(&local_in_recv_rules.rule_head),
@@ -136,6 +141,30 @@ static enum net_verdict lock_evaluate(struct npf_rule_list *rules, struct net_pk
 	return result;
 }
 
+static void evaluate_priority(sys_slist_t *rule_head, struct net_pkt *pkt)
+{
+	struct npf_rule *rule;
+
+	NET_DBG("priority rule_head %p on pkt %p", rule_head, pkt);
+
+	SYS_SLIST_FOR_EACH_CONTAINER(rule_head, rule, node) {
+		__ASSERT(rule->result == NET_CONTINUE,
+			 "Receive priority list contains verdict rule");
+
+		if (rule->result == NET_CONTINUE && apply_tests(rule, pkt)) {
+			net_pkt_set_priority(pkt, rule->priority);
+		}
+	}
+}
+
+static void lock_evaluate_priority(struct npf_rule_list *rules, struct net_pkt *pkt)
+{
+	k_spinlock_key_t key = k_spin_lock(&rules->lock);
+
+	evaluate_priority(&rules->rule_head, pkt);
+	k_spin_unlock(&rules->lock, key);
+}
+
 bool net_pkt_filter_send_ok(struct net_pkt *pkt)
 {
 	enum net_verdict result = lock_evaluate(&npf_send_rules, pkt);
@@ -145,7 +174,10 @@ bool net_pkt_filter_send_ok(struct net_pkt *pkt)
 
 bool net_pkt_filter_recv_ok(struct net_pkt *pkt)
 {
-	enum net_verdict result = lock_evaluate(&npf_recv_rules, pkt);
+	enum net_verdict result;
+
+	lock_evaluate_priority(&npf_recv_priority_rules, pkt);
+	result = lock_evaluate(&npf_recv_rules, pkt);
 
 	return result == NET_OK;
 }
@@ -224,6 +256,28 @@ bool npf_remove_all_rules(struct npf_rule_list *rules)
 
 	k_spin_unlock(&rules->lock, key);
 	return result;
+}
+
+void npf_insert_recv_priority_rule(struct npf_rule *rule)
+{
+	__ASSERT(rule->result == NET_CONTINUE, "Only priority rules can be inserted");
+	npf_insert_rule(&npf_recv_priority_rules, rule);
+}
+
+void npf_append_recv_priority_rule(struct npf_rule *rule)
+{
+	__ASSERT(rule->result == NET_CONTINUE, "Only priority rules can be appended");
+	npf_append_rule(&npf_recv_priority_rules, rule);
+}
+
+bool npf_remove_recv_priority_rule(struct npf_rule *rule)
+{
+	return npf_remove_rule(&npf_recv_priority_rules, rule);
+}
+
+bool npf_remove_all_recv_priority_rules(void)
+{
+	return npf_remove_all_rules(&npf_recv_priority_rules);
 }
 
 /*
@@ -346,6 +400,7 @@ bool npf_local_in_match(struct npf_test *test, struct net_pkt *pkt)
 void npf_rules_foreach(npf_rule_cb_t cb, void *user_data)
 {
 	rules_cb(&npf_send_rules, NPF_RULE_TYPE_SEND, cb, user_data);
+	rules_cb(&npf_recv_priority_rules, NPF_RULE_TYPE_RECV_PRIORITY, cb, user_data);
 	rules_cb(&npf_recv_rules, NPF_RULE_TYPE_RECV, cb, user_data);
 
 #ifdef CONFIG_NET_PKT_FILTER_LOCAL_IN_HOOK

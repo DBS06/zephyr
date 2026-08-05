@@ -148,6 +148,41 @@ bool npf_remove_rule(struct npf_rule_list *rules, struct npf_rule *rule);
  */
 bool npf_remove_all_rules(struct npf_rule_list *rules);
 
+/**
+ * @brief Insert a receive priority rule at the front of the priority rule list
+ *
+ * Receive priority rules are evaluated before receive verdict rules. Matching
+ * rules can update the packet priority but never accept or drop a packet.
+ *
+ * @param rule the priority rule to be inserted
+ */
+void npf_insert_recv_priority_rule(struct npf_rule *rule);
+
+/**
+ * @brief Append a receive priority rule to the priority rule list
+ *
+ * Receive priority rules are evaluated before receive verdict rules. Matching
+ * rules can update the packet priority but never accept or drop a packet.
+ *
+ * @param rule the priority rule to be appended
+ */
+void npf_append_recv_priority_rule(struct npf_rule *rule);
+
+/**
+ * @brief Remove a receive priority rule from the priority rule list
+ *
+ * @param rule the priority rule to be removed
+ * @retval true if given rule was found in the priority rule list and removed
+ */
+bool npf_remove_recv_priority_rule(struct npf_rule *rule);
+
+/**
+ * @brief Remove all receive priority rules
+ *
+ * @retval true if at least one rule was removed from the priority rule list
+ */
+bool npf_remove_all_recv_priority_rules(void);
+
 /** @cond INTERNAL_HIDDEN */
 
 /* convenience shortcuts */
@@ -729,10 +764,11 @@ struct npf_test_local_in {
 enum npf_rule_type {
 	NPF_RULE_TYPE_UNKNOWN = 0,   /**< Unknown rule type */
 	NPF_RULE_TYPE_SEND,          /**< Rule for outgoing packets */
-	NPF_RULE_TYPE_RECV,          /**< Rule for incoming packets */
+	NPF_RULE_TYPE_RECV,          /**< Verdict rule for incoming packets */
 	NPF_RULE_TYPE_LOCAL_IN_RECV, /**< Rule for local incoming packets */
 	NPF_RULE_TYPE_IPV4_RECV,     /**< Rule for IPv4 incoming packets */
 	NPF_RULE_TYPE_IPV6_RECV,     /**< Rule for IPv6 incoming packets */
+	NPF_RULE_TYPE_RECV_PRIORITY, /**< Priority rule for incoming packets */
 };
 
 /**
@@ -740,7 +776,7 @@ enum npf_rule_type {
  * @brief Callback used while iterating over network packet filter rules.
  *
  * @param rule Pointer to current network packet filter rule
- * @param type Type of the rule (rx, tx, local_in, IPv4 or IPv6)
+ * @param type Type of the rule (rx priority, rx, tx, local_in, IPv4 or IPv6)
  * @param user_data A valid pointer to user data or NULL
  */
 typedef void (*npf_rule_cb_t)(struct npf_rule *rule,
