@@ -12,3 +12,5 @@ zephyr_library_sources(
   tlv.c
   transport.c
 )
+
+zephyr_library_sources_ifdef(CONFIG_PTP_RX_PACKET_PRIORITY packet_priority.c)

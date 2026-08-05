@@ -45,6 +45,22 @@ Follow these steps to build the PTP sample application:
    :goals: build
    :compact:
 
+Prioritizing Layer 2 Receive Packets
+===================================
+
+When using the Layer 2 PTP transport, receive packet prioritization can be
+enabled with the following optional configuration:
+
+.. code-block:: cfg
+
+    CONFIG_PTP_IEEE_802_3_PROTOCOL=y
+    CONFIG_PTP_RX_PACKET_PRIORITY=y
+
+This assigns ``NET_PRIORITY_CA`` to untagged EtherType ``0x88f7`` packets and
+single-VLAN packets with inner EtherType ``0x88f7`` before receive traffic-class
+selection. The option is disabled by default. It does not change UDP PTP,
+non-PTP, or double-VLAN packets.
+
 Interpreting net ptp Output
 ===========================
 

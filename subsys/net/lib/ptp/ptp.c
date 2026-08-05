@@ -15,6 +15,9 @@ LOG_MODULE_REGISTER(ptp, CONFIG_PTP_LOG_LEVEL);
 #include <zephyr/net/ptp.h>
 
 #include "clock.h"
+#if defined(CONFIG_PTP_RX_PACKET_PRIORITY)
+#include "packet_priority.h"
+#endif
 #include "port.h"
 #include "transport.h"
 
@@ -100,6 +103,10 @@ static int ptp_init(void)
 	if (!domain) {
 		return -ENODEV;
 	}
+
+#if defined(CONFIG_PTP_RX_PACKET_PRIORITY)
+	ptp_rx_packet_priority_init();
+#endif
 
 	net_if_foreach(ptp_port_init, NULL);
 
