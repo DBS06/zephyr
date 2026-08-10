@@ -13,6 +13,7 @@
 #include <zephyr/drivers/ptp_clock.h>
 #include <zephyr/precision_timing/precision_clock_ptp.h>
 #include <zephyr/precision_timing/precision_timing.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/ztest.h>
 
 static const struct precision_time_domain source_domain = {
@@ -24,6 +25,15 @@ static const struct precision_time_domain local_domain = {
 	.type = PRECISION_TIME_DOMAIN_PHC,
 	.id = 2,
 };
+
+#define SOFTWARE_CLOCK_READER_COUNT      3
+#define SOFTWARE_CLOCK_READ_ITERATIONS   100
+#define SOFTWARE_CLOCK_READER_STACK_SIZE 1024
+
+K_THREAD_STACK_ARRAY_DEFINE(software_clock_reader_stacks, SOFTWARE_CLOCK_READER_COUNT,
+			    SOFTWARE_CLOCK_READER_STACK_SIZE);
+static struct k_thread software_clock_reader_threads[SOFTWARE_CLOCK_READER_COUNT];
+static atomic_t software_clock_read_failures;
 
 static int legacy_ptp_clock_set(const struct device *dev, struct net_ptp_time *tm)
 {
@@ -837,6 +847,233 @@ ZTEST(precision_timing, test_precision_clock_rejects_unexpected_read_domain)
 	zassert_equal(precision_clock_read(&precision_clk, &tp), -EINVAL);
 	zassert_equal(tp.time, 100);
 	zassert_true(precision_time_domain_equal(&tp.domain, &source_domain));
+}
+
+static precision_time_t software_clock_test_monotonic_now(void)
+{
+#if defined(CONFIG_TIMER_HAS_64BIT_CYCLE_COUNTER) &&                                               \
+	!defined(CONFIG_SYSTEM_CLOCK_HW_CYCLES_PER_SEC_RUNTIME_UPDATE)
+	return (precision_time_t)k_cyc_to_ns_floor64(k_cycle_get_64());
+#else
+	return (precision_time_t)k_ticks_to_ns_floor64((uint64_t)k_uptime_ticks());
+#endif
+}
+
+static void software_clock_test_anchor(struct precision_software_clock *clock,
+				       precision_time_t anchor_time_ns, precision_time_t elapsed_ns,
+				       int32_t rate_ppb)
+{
+	precision_time_t now_ns = software_clock_test_monotonic_now();
+	precision_time_t anchor_monotonic_ns;
+
+	zassert_ok(precision_time_sub(now_ns, elapsed_ns, &anchor_monotonic_ns));
+	zassert_ok(k_mutex_lock(&clock->lock, K_FOREVER));
+	clock->anchor_time_ns = anchor_time_ns;
+	clock->anchor_monotonic_ns = anchor_monotonic_ns;
+	clock->rate_ppb = rate_ppb;
+	zassert_ok(k_mutex_unlock(&clock->lock));
+}
+
+static void software_clock_reader(void *clock_ptr, void *unused1, void *unused2)
+{
+	const struct precision_clock *clock = clock_ptr;
+	precision_time_t previous_ns = PRECISION_TIME_MIN;
+
+	ARG_UNUSED(unused1);
+	ARG_UNUSED(unused2);
+
+	for (int i = 0; i < SOFTWARE_CLOCK_READ_ITERATIONS; i++) {
+		struct precision_time_point tp;
+
+		if (precision_clock_read(clock, &tp) < 0 ||
+		    !precision_time_domain_equal(&tp.domain, &local_domain) ||
+		    tp.time < previous_ns) {
+			atomic_inc(&software_clock_read_failures);
+		} else {
+			previous_ns = tp.time;
+		}
+
+		k_yield();
+	}
+}
+
+ZTEST(precision_timing, test_software_clock_reports_full_capabilities)
+{
+	struct precision_software_clock software_clock = {0};
+	struct precision_time_domain invalid_domain = {0};
+	struct precision_clock_caps caps;
+	const struct precision_clock *clock;
+
+	zassert_is_null(precision_software_clock_get(NULL));
+	zassert_is_null(precision_software_clock_get(&software_clock));
+	zassert_equal(precision_software_clock_init(NULL, local_domain, 0), -EINVAL);
+	zassert_equal(precision_software_clock_init(&software_clock, invalid_domain, 0), -EINVAL);
+
+	zassert_ok(precision_software_clock_init(&software_clock, local_domain, 1234));
+	clock = precision_software_clock_get(&software_clock);
+	zassert_not_null(clock);
+	zassert_ok(precision_clock_get_caps(clock, &caps));
+	zassert_equal(caps.flags, PRECISION_CLOCK_CAP_READ | PRECISION_CLOCK_CAP_SET |
+					  PRECISION_CLOCK_CAP_ADJUST_PHASE |
+					  PRECISION_CLOCK_CAP_ADJUST_RATE);
+#if defined(CONFIG_TIMER_HAS_64BIT_CYCLE_COUNTER) &&                                               \
+	!defined(CONFIG_SYSTEM_CLOCK_HW_CYCLES_PER_SEC_RUNTIME_UPDATE)
+	zassert_equal(caps.resolution_ns, k_cyc_to_ns_ceil64(1));
+	zassert_true(caps.resolution_ns < k_ticks_to_ns_ceil64(1));
+#else
+	zassert_equal(caps.resolution_ns, k_ticks_to_ns_ceil64(1));
+#endif
+	zassert_equal(caps.max_phase_adjust_ns, PRECISION_TIME_MAX);
+	zassert_equal(caps.min_rate_ppb, -999999999);
+	zassert_equal(caps.max_rate_ppb, INT32_MAX);
+}
+
+#if defined(CONFIG_TIMER_HAS_64BIT_CYCLE_COUNTER) &&                                               \
+	!defined(CONFIG_SYSTEM_CLOCK_HW_CYCLES_PER_SEC_RUNTIME_UPDATE)
+ZTEST(precision_timing, test_software_clock_advances_within_uptime_tick)
+{
+	struct precision_software_clock software_clock = {0};
+	const struct precision_clock *clock;
+	bool observed_sub_tick_advance = false;
+
+	zassert_ok(precision_software_clock_init(&software_clock, local_domain, 0));
+	clock = precision_software_clock_get(&software_clock);
+	zassert_not_null(clock);
+
+	for (int i = 0; i < 10; i++) {
+		struct precision_time_point before;
+		struct precision_time_point after;
+		int64_t tick_before = k_uptime_ticks();
+
+		zassert_ok(precision_clock_read(clock, &before));
+		k_busy_wait(10);
+		zassert_ok(precision_clock_read(clock, &after));
+		if (k_uptime_ticks() == tick_before) {
+			zassert_true(after.time > before.time);
+			observed_sub_tick_advance = true;
+			break;
+		}
+	}
+
+	zassert_true(observed_sub_tick_advance);
+}
+#endif
+
+ZTEST(precision_timing, test_software_clock_applies_positive_and_negative_rates)
+{
+	struct precision_software_clock software_clock;
+	struct precision_time_point tp;
+	const struct precision_clock *clock;
+
+	zassert_ok(precision_software_clock_init(&software_clock, local_domain, 0));
+	clock = precision_software_clock_get(&software_clock);
+	k_sleep(K_MSEC(20));
+
+	software_clock_test_anchor(&software_clock, 0, 10 * NSEC_PER_MSEC, 500000000);
+	zassert_ok(precision_clock_read(clock, &tp));
+	zassert_within(tp.time, 15 * NSEC_PER_MSEC, 2 * NSEC_PER_MSEC);
+
+	software_clock_test_anchor(&software_clock, 0, 10 * NSEC_PER_MSEC, -500000000);
+	zassert_ok(precision_clock_read(clock, &tp));
+	zassert_within(tp.time, 5 * NSEC_PER_MSEC, 2 * NSEC_PER_MSEC);
+}
+
+ZTEST(precision_timing, test_software_clock_rate_changes_are_continuous)
+{
+	struct precision_software_clock software_clock;
+	struct precision_time_point before;
+	struct precision_time_point after;
+	const struct precision_clock *clock;
+
+	zassert_ok(precision_software_clock_init(&software_clock, local_domain, NSEC_PER_SEC));
+	clock = precision_software_clock_get(&software_clock);
+	k_sleep(K_MSEC(20));
+	software_clock_test_anchor(&software_clock, NSEC_PER_SEC, 10 * NSEC_PER_MSEC, 500000000);
+
+	zassert_ok(precision_clock_read(clock, &before));
+	zassert_ok(precision_clock_adjust_rate(clock, -500000000));
+	zassert_ok(precision_clock_read(clock, &after));
+	zassert_true(after.time >= before.time);
+	zassert_true(after.time - before.time <= 2 * NSEC_PER_MSEC);
+}
+
+ZTEST(precision_timing, test_software_clock_allows_explicit_forward_and_backward_steps)
+{
+	struct precision_software_clock software_clock;
+	struct precision_time_point tp = {
+		.time = 2 * NSEC_PER_SEC,
+		.domain = local_domain,
+	};
+	struct precision_time_point readback;
+	const struct precision_clock *clock;
+
+	zassert_ok(precision_software_clock_init(&software_clock, local_domain, 0));
+	clock = precision_software_clock_get(&software_clock);
+
+	zassert_ok(precision_clock_set(clock, &tp));
+	zassert_ok(precision_clock_read(clock, &readback));
+	zassert_true(readback.time >= tp.time);
+
+	tp.time = -2LL * NSEC_PER_SEC;
+	zassert_ok(precision_clock_set(clock, &tp));
+	zassert_ok(precision_clock_read(clock, &readback));
+	zassert_true(readback.time < 0, "readback=%lld", readback.time);
+
+	zassert_ok(precision_clock_adjust_phase(clock, NSEC_PER_SEC));
+	zassert_ok(precision_clock_read(clock, &readback));
+	zassert_within(readback.time, -1LL * NSEC_PER_SEC, 2 * NSEC_PER_MSEC);
+
+	zassert_ok(precision_clock_adjust_phase(clock, -2LL * NSEC_PER_SEC));
+	zassert_ok(precision_clock_read(clock, &readback));
+	zassert_within(readback.time, -3LL * NSEC_PER_SEC, 2 * NSEC_PER_MSEC);
+}
+
+ZTEST(precision_timing, test_software_clock_checks_adjustment_limits_and_overflow)
+{
+	struct precision_software_clock software_clock;
+	struct precision_time_point tp;
+	const struct precision_clock *clock;
+
+	zassert_ok(precision_software_clock_init(&software_clock, local_domain, 0));
+	clock = precision_software_clock_get(&software_clock);
+
+	zassert_ok(precision_clock_adjust_rate(clock, -999999999));
+	zassert_ok(precision_clock_adjust_rate(clock, -1));
+	zassert_equal(precision_clock_adjust_rate(clock, -1000000000), -ERANGE);
+	zassert_ok(precision_clock_adjust_rate(clock, INT32_MAX));
+	zassert_ok(precision_clock_adjust_rate(clock, 0));
+	zassert_equal(precision_clock_adjust_phase(clock, PRECISION_TIME_MIN), -ERANGE);
+
+	software_clock_test_anchor(&software_clock, PRECISION_TIME_MAX, 1, 0);
+	zassert_equal(precision_clock_read(clock, &tp), -ERANGE);
+	software_clock_test_anchor(&software_clock, 0, 5000000000000000000LL, INT32_MAX);
+	zassert_equal(precision_clock_read(clock, &tp), -ERANGE);
+
+	software_clock_test_anchor(&software_clock, PRECISION_TIME_MAX, 0, 0);
+	zassert_equal(precision_clock_adjust_phase(clock, 1), -ERANGE);
+}
+
+ZTEST(precision_timing, test_software_clock_supports_concurrent_reads)
+{
+	struct precision_software_clock software_clock;
+	const struct precision_clock *clock;
+
+	zassert_ok(precision_software_clock_init(&software_clock, local_domain, 0));
+	clock = precision_software_clock_get(&software_clock);
+	atomic_clear(&software_clock_read_failures);
+
+	for (int i = 0; i < SOFTWARE_CLOCK_READER_COUNT; i++) {
+		k_thread_create(&software_clock_reader_threads[i], software_clock_reader_stacks[i],
+				K_THREAD_STACK_SIZEOF(software_clock_reader_stacks[i]),
+				software_clock_reader, (void *)clock, NULL, NULL, K_PRIO_PREEMPT(1),
+				0, K_NO_WAIT);
+	}
+
+	for (int i = 0; i < SOFTWARE_CLOCK_READER_COUNT; i++) {
+		zassert_ok(k_thread_join(&software_clock_reader_threads[i], K_SECONDS(1)));
+	}
+
+	zassert_equal(atomic_get(&software_clock_read_failures), 0);
 }
 
 ZTEST(precision_timing, test_pi_init_rejects_outlier_without_sample_count)

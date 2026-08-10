@@ -31,6 +31,7 @@
 #include <zephyr/precision_timing/precision_deadline.h>
 #include <zephyr/precision_timing/precision_mapping.h>
 #include <zephyr/precision_timing/precision_pi.h>
+#include <zephyr/precision_timing/precision_software_clock.h>
 #include <zephyr/precision_timing/precision_time.h>
 
 #endif /* ZEPHYR_INCLUDE_ZEPHYR_PRECISION_TIMING_PRECISION_TIMING_H_ */

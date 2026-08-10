@@ -16,3 +16,7 @@ zephyr_library_sources(
 # Adapter that bridges the PTP clock driver API onto the protocol-neutral
 # precision timing clock abstraction.
 zephyr_library_sources_ifdef(CONFIG_PTP_CLOCK precision_clock_ptp.c)
+
+zephyr_library_sources_ifdef(CONFIG_PRECISION_SOFTWARE_CLOCK
+  precision_software_clock.c
+)

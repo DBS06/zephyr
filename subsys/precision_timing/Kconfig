@@ -40,4 +40,13 @@ config PRECISION_TIMING_PI_KI
 	  second. Shorter intervals may require a smaller gain to avoid
 	  oscillation.
 
+config PRECISION_SOFTWARE_CLOCK
+	bool "Adjustable software precision clock"
+	depends on MULTITHREADING
+	help
+	  Enable a caller-owned adjustable software clock backed by a stable
+	  64-bit system cycle counter when available, with kernel uptime ticks as
+	  a portable fallback. The clock is independent of SYS_CLOCK_REALTIME and
+	  supports explicit set, phase, and parts-per-billion rate adjustments.
+
 endif # PRECISION_TIMING
