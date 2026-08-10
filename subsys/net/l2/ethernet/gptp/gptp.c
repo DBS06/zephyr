@@ -941,6 +941,7 @@ static void gptp_clock_discipline_init(void)
 	struct precision_pi_config config = {
 		.source_domain = {.type = PRECISION_TIME_DOMAIN_GPTP, .id = 0},
 		.local_domain = {.type = PRECISION_TIME_DOMAIN_PHC, .id = 0},
+		.target_offset_ns = 0,
 		.step_threshold_ns = GPTP_SERVO_STEP_THRESHOLD_NS,
 		.source_timeout_ns = 0,
 		.holdover_ns = 0,

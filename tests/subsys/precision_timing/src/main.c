@@ -434,6 +434,64 @@ ZTEST(precision_timing, test_pi_adjusts_rate_and_locks)
 	zassert_equal(result.state, PRECISION_SYNC_LOCKED);
 }
 
+ZTEST(precision_timing, test_pi_applies_explicit_target_offset)
+{
+	struct precision_pi_config config = {
+		.source_domain = source_domain,
+		.local_domain = local_domain,
+		.target_offset_ns = 200,
+		.step_threshold_ns = NSEC_PER_SEC,
+		.lock_sample_count = 0,
+		.min_rate_ppb = INT32_MIN,
+		.max_rate_ppb = INT32_MAX,
+		.kp_num = 7,
+		.ki_num = 3,
+		.gain_den = 10,
+	};
+	struct precision_pi_discipline discipline;
+	struct precision_discipline_result result;
+	struct precision_time_observation obs = observation(1000, 1100);
+
+	zassert_ok(precision_pi_init(&discipline, &config));
+	zassert_ok(precision_pi_process(&discipline, &obs, &result));
+	zassert_equal(result.offset_ns, 100);
+	zassert_equal(result.rate_ppb, 100);
+
+	config.target_offset_ns = -200;
+	obs.local.time = 900;
+	zassert_ok(precision_pi_init(&discipline, &config));
+	zassert_ok(precision_pi_process(&discipline, &obs, &result));
+	zassert_equal(result.offset_ns, -100);
+	zassert_equal(result.rate_ppb, -100);
+}
+
+ZTEST(precision_timing, test_pi_rejects_target_offset_overflow)
+{
+	struct precision_pi_config config = {
+		.source_domain = source_domain,
+		.local_domain = local_domain,
+		.target_offset_ns = 1,
+		.min_rate_ppb = INT32_MIN,
+		.max_rate_ppb = INT32_MAX,
+		.kp_num = 1,
+		.gain_den = 1,
+	};
+	struct precision_pi_discipline discipline;
+	struct precision_discipline_result result;
+	struct precision_time_observation obs = observation(PRECISION_TIME_MAX, 0);
+
+	zassert_ok(precision_pi_init(&discipline, &config));
+	zassert_equal(precision_pi_process(&discipline, &obs, &result), -ERANGE);
+	zassert_equal(result.action, PRECISION_DISCIPLINE_IGNORE);
+	zassert_equal(result.rejected_observations, 1U);
+
+	config.target_offset_ns = PRECISION_TIME_MIN;
+	obs.source.time = -1;
+	zassert_ok(precision_pi_init(&discipline, &config));
+	zassert_equal(precision_pi_process(&discipline, &obs, &result), -ERANGE);
+	zassert_equal(result.rejected_observations, 1U);
+}
+
 ZTEST(precision_timing, test_pi_does_not_wind_up_at_rate_limits)
 {
 	struct precision_pi_config config = {

@@ -170,6 +170,7 @@ int precision_pi_process(struct precision_pi_discipline *discipline,
 			 const struct precision_time_observation *observation,
 			 struct precision_discipline_result *result)
 {
+	precision_time_t desired_local_ns;
 	precision_time_t offset_ns;
 	precision_time_t abs_offset_ns;
 	int64_t proportional_ppb;
@@ -218,7 +219,15 @@ int precision_pi_process(struct precision_pi_discipline *discipline,
 		return -EINVAL;
 	}
 
-	ret = precision_time_sub(observation->source.time, observation->local.time, &offset_ns);
+	ret = precision_time_add(observation->source.time, discipline->config.target_offset_ns,
+				 &desired_local_ns);
+	if (ret < 0) {
+		discipline->rejected_observations++;
+		precision_pi_result_set(discipline, result, PRECISION_DISCIPLINE_IGNORE, 0);
+		return ret;
+	}
+
+	ret = precision_time_sub(desired_local_ns, observation->local.time, &offset_ns);
 	if (ret < 0) {
 		discipline->rejected_observations++;
 		precision_pi_result_set(discipline, result, PRECISION_DISCIPLINE_IGNORE, 0);

@@ -72,6 +72,8 @@ struct precision_pi_config {
 	struct precision_time_domain source_domain;
 	/** Required local observation domain. */
 	struct precision_time_domain local_domain;
+	/** Desired local time minus source time in nanoseconds. */
+	precision_time_t target_offset_ns;
 	/** Absolute offset above which a clock step is requested. */
 	precision_time_t step_threshold_ns;
 	/** Maximum absolute offset considered locked. */
@@ -113,7 +115,7 @@ struct precision_pi_discipline {
 	enum precision_sync_state state;
 	/** Accumulated integral correction in parts per billion. */
 	int64_t drift_ppb;
-	/** Most recently accepted source-minus-local offset in nanoseconds. */
+	/** Most recently accepted target-adjusted offset in nanoseconds. */
 	int64_t last_offset_ns;
 	/** Current clamped rate correction in parts per billion. */
 	int32_t frequency_correction_ppb;
@@ -135,7 +137,7 @@ struct precision_discipline_result {
 	enum precision_discipline_action action;
 	/** Synchronization state after processing. */
 	enum precision_sync_state state;
-	/** Source-minus-local observation offset in nanoseconds. */
+	/** Desired-local-minus-observed-local offset in nanoseconds. */
 	precision_time_t offset_ns;
 	/** Signed phase correction for @ref PRECISION_DISCIPLINE_STEP. */
 	precision_time_t phase_correction_ns;
@@ -149,7 +151,7 @@ struct precision_discipline_result {
 struct precision_pi_status {
 	/** Current synchronization state. */
 	enum precision_sync_state state;
-	/** Most recently accepted source-minus-local offset in nanoseconds. */
+	/** Most recently accepted target-adjusted offset in nanoseconds. */
 	precision_time_t last_offset_ns;
 	/** Local timestamp of the last accepted observation. */
 	precision_time_t last_update_ns;

@@ -249,6 +249,7 @@ static void clock_servo_init(void)
 	struct precision_pi_config config = {
 		.source_domain = clock_ptp_domain(),
 		.local_domain = clock_phc_domain(),
+		.target_offset_ns = 0,
 		.step_threshold_ns = SYNC_SERVO_STEP_THRESHOLD_NS,
 		.lock_threshold_ns = SYNC_SERVO_LOCK_OFFSET_NS,
 		.outlier_threshold_ns = SYNC_SERVO_OUTLIER_NS,
