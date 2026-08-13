@@ -49,7 +49,15 @@ struct precision_clock_caps {
 	uint32_t flags;
 	/** Smallest representable clock increment in nanoseconds. */
 	precision_time_t resolution_ns;
-	/** Largest supported absolute phase adjustment in nanoseconds. */
+	/**
+	 * Largest supported absolute phase adjustment in nanoseconds, or zero
+	 * when the adapter reports no limit.
+	 *
+	 * Zero means that the subsystem does not bound the requested phase
+	 * adjustment. An adapter that cannot adjust phase at all must clear
+	 * @ref PRECISION_CLOCK_CAP_ADJUST_PHASE rather than report a zero
+	 * limit here.
+	 */
 	precision_time_t max_phase_adjust_ns;
 	/** Minimum supported rate adjustment in parts per billion. */
 	int32_t min_rate_ppb;
@@ -101,7 +109,8 @@ struct precision_clock {
  * @param tp Destination for the clock value and domain.
  *
  * @retval 0 on success.
- * @retval -EINVAL if an argument or clock API is invalid.
+ * @retval -EINVAL if an argument or clock API is invalid, or if the adapter
+ * reports a valid domain that differs from the domain declared by the clock.
  * @retval -ENOTSUP if the clock does not support reading.
  * @return An adapter-specific negative error code on failure.
  */

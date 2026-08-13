@@ -49,4 +49,12 @@ config PRECISION_SOFTWARE_CLOCK
 	  a portable fallback. The clock is independent of SYS_CLOCK_REALTIME and
 	  supports explicit set, phase, and parts-per-billion rate adjustments.
 
+config PRECISION_CLOCK_SYNC_SERVICE
+	bool "Precision clock synchronization service"
+	depends on MULTITHREADING
+	help
+	  Enable caller-owned fixed-clock synchronization instances that sample a
+	  source clock, discipline an exclusively owned sink clock, and publish
+	  lifecycle and synchronization diagnostics.
+
 endif # PRECISION_TIMING

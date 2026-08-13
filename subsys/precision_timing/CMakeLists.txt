@@ -20,3 +20,7 @@ zephyr_library_sources_ifdef(CONFIG_PTP_CLOCK precision_clock_ptp.c)
 zephyr_library_sources_ifdef(CONFIG_PRECISION_SOFTWARE_CLOCK
   precision_software_clock.c
 )
+
+zephyr_library_sources_ifdef(CONFIG_PRECISION_CLOCK_SYNC_SERVICE
+  precision_clock_sync.c
+)

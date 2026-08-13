@@ -28,6 +28,7 @@
 /** @} */
 
 #include <zephyr/precision_timing/precision_clock.h>
+#include <zephyr/precision_timing/precision_clock_sync.h>
 #include <zephyr/precision_timing/precision_deadline.h>
 #include <zephyr/precision_timing/precision_mapping.h>
 #include <zephyr/precision_timing/precision_pi.h>
