@@ -14,6 +14,7 @@
 #include <zephyr/precision_timing/precision_clock_ptp.h>
 #include <zephyr/precision_timing/precision_timing.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/clock.h>
 #include <zephyr/ztest.h>
 
 static const struct precision_time_domain source_domain = {
@@ -24,6 +25,11 @@ static const struct precision_time_domain source_domain = {
 static const struct precision_time_domain local_domain = {
 	.type = PRECISION_TIME_DOMAIN_PHC,
 	.id = 2,
+};
+
+static const struct precision_time_domain utc_domain = {
+	.type = PRECISION_TIME_DOMAIN_UTC,
+	.id = 3,
 };
 
 #define SOFTWARE_CLOCK_READER_COUNT      3
@@ -847,6 +853,48 @@ ZTEST(precision_timing, test_precision_clock_rejects_unexpected_read_domain)
 	zassert_equal(precision_clock_read(&precision_clk, &tp), -EINVAL);
 	zassert_equal(tp.time, 100);
 	zassert_true(precision_time_domain_equal(&tp.domain, &source_domain));
+}
+
+ZTEST(precision_timing, test_precision_clock_steps_realtime_only_from_utc)
+{
+	struct fake_clock_data data = {
+		.time = 42LL * NSEC_PER_SEC + 123456789,
+	};
+	struct precision_clock precision_clk = {
+		.api = &fake_clock_api,
+		.adapter = &data,
+		.domain = local_domain,
+	};
+	struct timespec original;
+	struct timespec negative_observed;
+	struct timespec observed;
+	precision_time_t negative_observed_ns;
+	precision_time_t observed_ns;
+
+	zassert_equal(precision_clock_step_realtime(NULL), -EINVAL);
+	zassert_equal(precision_clock_step_realtime(&precision_clk), -EINVAL);
+
+	precision_clk.domain = utc_domain;
+	zassert_ok(sys_clock_gettime(SYS_CLOCK_REALTIME, &original));
+
+	data.time = -42LL * NSEC_PER_SEC + 123456789;
+	zassert_ok(precision_clock_step_realtime(&precision_clk));
+	zassert_ok(sys_clock_gettime(SYS_CLOCK_REALTIME, &negative_observed));
+
+	data.time = 42LL * NSEC_PER_SEC + 123456789;
+	zassert_ok(precision_clock_step_realtime(&precision_clk));
+	zassert_ok(sys_clock_gettime(SYS_CLOCK_REALTIME, &observed));
+	zassert_ok(sys_clock_settime(SYS_CLOCK_REALTIME, &original));
+
+	negative_observed_ns = (precision_time_t)negative_observed.tv_sec * NSEC_PER_SEC +
+			       negative_observed.tv_nsec;
+	zassert_true(negative_observed_ns >= -42LL * NSEC_PER_SEC + 123456789);
+	zassert_true(negative_observed_ns - (-42LL * NSEC_PER_SEC + 123456789) < NSEC_PER_SEC);
+
+	zassert_ok(precision_time_from_u64_sec_nsec((uint64_t)observed.tv_sec,
+						    (uint32_t)observed.tv_nsec, &observed_ns));
+	zassert_true(observed_ns >= data.time);
+	zassert_true(observed_ns - data.time < NSEC_PER_SEC);
 }
 
 static precision_time_t software_clock_test_monotonic_now(void)

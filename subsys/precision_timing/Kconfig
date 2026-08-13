@@ -57,6 +57,17 @@ config PRECISION_CLOCK_SYNC_SERVICE
 	  source clock, discipline an exclusively owned sink clock, and publish
 	  lifecycle and synchronization diagnostics.
 
+config PRECISION_REALTIME_BRIDGE
+	bool "UTC precision clock to system real-time bridge"
+	help
+	  Enable an explicit one-shot helper that steps SYS_CLOCK_REALTIME from a
+	  precision clock whose domain type is PRECISION_TIME_DOMAIN_UTC.
+
+	  The helper only performs a single caller-requested step. Cadence,
+	  backward-step policy, and ownership of the global real-time clock
+	  remain with the application, and system real-time keeps its kernel tick
+	  resolution after the step.
+
 config PRECISION_TIMING_SHELL
 	bool "Precision timing shell"
 	depends on SHELL

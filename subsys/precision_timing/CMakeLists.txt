@@ -13,6 +13,12 @@ zephyr_library_sources(
   precision_time.c
 )
 
+# Optional one-shot bridge from a UTC-domain precision clock onto the global
+# system real-time clock.
+zephyr_library_sources_ifdef(CONFIG_PRECISION_REALTIME_BRIDGE
+  precision_realtime.c
+)
+
 # Adapter that bridges the PTP clock driver API onto the protocol-neutral
 # precision timing clock abstraction.
 zephyr_library_sources_ifdef(CONFIG_PTP_CLOCK precision_clock_ptp.c)
