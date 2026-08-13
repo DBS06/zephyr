@@ -24,3 +24,7 @@ zephyr_library_sources_ifdef(CONFIG_PRECISION_SOFTWARE_CLOCK
 zephyr_library_sources_ifdef(CONFIG_PRECISION_CLOCK_SYNC_SERVICE
   precision_clock_sync.c
 )
+
+zephyr_library_sources_ifdef(CONFIG_PRECISION_TIMING_SHELL
+  precision_timing_shell.c
+)

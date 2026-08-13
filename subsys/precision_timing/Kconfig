@@ -57,4 +57,21 @@ config PRECISION_CLOCK_SYNC_SERVICE
 	  source clock, discipline an exclusively owned sink clock, and publish
 	  lifecycle and synchronization diagnostics.
 
+config PRECISION_TIMING_SHELL
+	bool "Precision timing shell"
+	depends on SHELL
+	help
+	  Enable a runtime registry and shell commands for inspecting precision
+	  clocks. When the precision clock synchronization service is enabled,
+	  registered synchronization instances can also be started, stopped,
+	  reset, and inspected.
+
+config PRECISION_TIMING_SHELL_MAX_INSTANCES
+	int "Maximum number of precision timing shell instances"
+	default 4
+	range 1 16
+	depends on PRECISION_TIMING_SHELL
+	help
+	  Set the fixed capacity of the precision timing shell registry.
+
 endif # PRECISION_TIMING
