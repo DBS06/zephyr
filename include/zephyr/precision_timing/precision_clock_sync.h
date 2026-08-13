@@ -103,6 +103,8 @@ struct precision_clock_sync {
 	struct precision_clock_sync_status status;
 	/** Monotonic uptime of the last accepted observation. */
 	precision_time_t last_update_uptime_ns;
+	/** Lifecycle incarnation used to reject calls stale across reinitialization. */
+	uint32_t incarnation;
 	/** Generation used to discard stale work. */
 	uint32_t generation;
 	/** Whether source recovery must start with fresh PI state. */
@@ -111,6 +113,14 @@ struct precision_clock_sync {
 	bool has_last_update_uptime;
 	/** Whether initialization completed successfully. */
 	bool initialized;
+	/**
+	 * Whether the embedded locks have been constructed.
+	 *
+	 * Set by the first successful initialization and never cleared, so
+	 * that re-initialization can serialize against lifecycle calls that
+	 * are already blocked on @c lifecycle_lock.
+	 */
+	bool locks_ready;
 };
 
 /**
@@ -143,6 +153,14 @@ int precision_clock_sync_config_default(struct precision_clock_sync_config *conf
  * The configuration is copied. Initialization validates clock identities and
  * capabilities and intersects PI rate limits with the sink limits.
  *
+ * Release an initialized instance with precision_clock_sync_deinit() before
+ * initializing it again with a different configuration.
+ * Do not invoke another synchronization-service API on @p sync until its
+ * first initialization call has returned. Subsequent lifecycle operations
+ * and reinitialization are serialized by the instance.
+ *
+ * Call this function from thread context.
+ *
  * @param sync Caller-owned synchronization state.
  * @param config Configuration to copy and validate.
  *
@@ -158,6 +176,8 @@ int precision_clock_sync_init(struct precision_clock_sync *sync,
 
 /**
  * @brief Start periodic clock synchronization.
+ *
+ * Call this function from thread context.
  *
  * @param sync Initialized synchronization instance.
  *
@@ -175,28 +195,66 @@ int precision_clock_sync_start(struct precision_clock_sync *sync);
  * Stopping an already stopped instance succeeds. The last applied sink rate
  * is retained.
  *
+ * Call this function from thread context.
+ *
  * @param sync Initialized synchronization instance.
  *
  * @retval 0 on success.
  * @retval -EINVAL if @p sync is invalid.
+ * @retval -EDEADLK if called recursively by a clock adapter from the service
+ * work handler.
  */
 int precision_clock_sync_stop(struct precision_clock_sync *sync);
+
+/**
+ * @brief Release a synchronization instance so that it can be reconfigured.
+ *
+ * Stops periodic synchronization, waits for any in-flight update to complete,
+ * and marks the instance uninitialized so that
+ * precision_clock_sync_init() can be called again with a new configuration.
+ * Deinitializing an instance that was never initialized succeeds.
+ *
+ * The sink is left untouched and retains its last applied rate. Restore the
+ * nominal rate with precision_clock_sync_reset() before this call when the
+ * sink must not keep the last correction.
+ *
+ * A start, stop, or reset that is already in progress on another thread is
+ * allowed to complete first; a call that arrives during the release fails
+ * with -EINVAL rather than resuming work on a released instance.
+ *
+ * Call this function from thread context.
+ *
+ * @param sync Synchronization instance to release.
+ *
+ * @retval 0 on success, including when @p sync was never initialized or has
+ * already been released.
+ * @retval -EINVAL if @p sync is null.
+ * @retval -EDEADLK if called recursively by a clock adapter from the service
+ * work handler.
+ */
+int precision_clock_sync_deinit(struct precision_clock_sync *sync);
 
 /**
  * @brief Reset synchronization and restore the sink to nominal rate.
  *
  * A running instance resumes acquisition after the synchronous reset.
  *
+ * Call this function from thread context.
+ *
  * @param sync Initialized synchronization instance.
  *
  * @retval 0 on success.
  * @retval -EINVAL if @p sync is invalid.
+ * @retval -EDEADLK if called recursively by a clock adapter from the service
+ * work handler.
  * @return A sink control or work scheduling error on failure.
  */
 int precision_clock_sync_reset(struct precision_clock_sync *sync);
 
 /**
  * @brief Copy synchronization status.
+ *
+ * Call this function from thread context.
  *
  * @param sync Initialized synchronization instance.
  * @param status Destination for the coherent status snapshot.

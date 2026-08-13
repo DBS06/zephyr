@@ -23,6 +23,14 @@
 #define CLOCK_SYNC_DEFAULT_LOCK_SAMPLES          3U
 #define CLOCK_SYNC_DEFAULT_OUTLIER_SAMPLES       2U
 
+/*
+ * Longest accepted update interval. The bound keeps the configured interval
+ * well inside the range that the kernel timeout conversion can represent, and
+ * a synchronization instance that samples less than once per hour cannot hold
+ * a useful correction anyway.
+ */
+#define CLOCK_SYNC_MAX_UPDATE_NS (3600LL * NSEC_PER_SEC)
+
 struct clock_sync_sampling_result {
 	struct precision_time_observation observation;
 	precision_time_t bracket_ns;
@@ -38,6 +46,8 @@ struct clock_sync_source_state {
 	bool has_last_update_uptime;
 	bool lost;
 };
+
+static void clock_sync_work_handler(struct k_work *work);
 
 static bool clock_sync_domain_valid(const struct precision_time_domain *domain)
 {
@@ -148,7 +158,9 @@ static int clock_sync_preflight(struct precision_clock_sync_config *config,
 	int ret;
 
 	if (config->source == NULL || config->sink == NULL || config->source == config->sink ||
-	    config->update_interval_ns <= 0 || config->readings_per_update == 0U ||
+	    config->update_interval_ns <= 0 ||
+	    config->update_interval_ns > CLOCK_SYNC_MAX_UPDATE_NS ||
+	    config->readings_per_update == 0U ||
 	    !clock_sync_domain_valid(&config->source->domain) ||
 	    !clock_sync_domain_valid(&config->sink->domain) ||
 	    precision_time_domain_equal(&config->source->domain, &config->sink->domain) ||
@@ -493,6 +505,21 @@ static bool clock_sync_commit(struct precision_clock_sync *sync, uint32_t genera
 	return committed;
 }
 
+static int clock_sync_reschedule_locked(struct precision_clock_sync *sync, k_timeout_t delay)
+{
+	int ret;
+
+	ret = k_work_reschedule(&sync->work, delay);
+	if (ret < 0) {
+		sync->status.running = false;
+		sync->status.last_error = ret;
+		sync->generation++;
+		return ret;
+	}
+
+	return 0;
+}
+
 static int clock_sync_process_source_timeout(const struct precision_clock_sync_config *config,
 					     const struct precision_clock_caps *sink_caps,
 					     precision_time_t now_uptime_ns, int reported_error,
@@ -600,6 +627,31 @@ static int clock_sync_process_observation(const struct precision_clock_sync_conf
 						 status, source_state);
 }
 
+static void clock_sync_work_handler(struct k_work *work)
+{
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct precision_clock_sync *sync = CONTAINER_OF(dwork, struct precision_clock_sync, work);
+	precision_time_t update_interval_ns;
+	uint32_t generation;
+
+	(void)k_mutex_lock(&sync->lock, K_FOREVER);
+	if (!sync->initialized || !sync->status.running) {
+		(void)k_mutex_unlock(&sync->lock);
+		return;
+	}
+	generation = sync->generation;
+	update_interval_ns = sync->config.update_interval_ns;
+	(void)k_mutex_unlock(&sync->lock);
+
+	(void)precision_clock_sync_run_once(sync, generation);
+
+	(void)k_mutex_lock(&sync->lock, K_FOREVER);
+	if (sync->initialized && sync->status.running && sync->generation == generation) {
+		(void)clock_sync_reschedule_locked(sync, K_NSEC(update_interval_ns));
+	}
+	(void)k_mutex_unlock(&sync->lock);
+}
+
 int precision_clock_sync_config_default(struct precision_clock_sync_config *config,
 					const struct precision_clock *source,
 					const struct precision_clock *sink)
@@ -644,6 +696,75 @@ int precision_clock_sync_config_default(struct precision_clock_sync_config *conf
 	return 0;
 }
 
+/*
+ * Clear everything an initialized instance owns, except the embedded locks
+ * and the lifecycle incarnation.
+ *
+ * The locks must survive re-initialization because a lifecycle call may still
+ * be blocked on the lifecycle lock. A k_mutex embeds a wait queue whose empty
+ * state is a self-referencing list head, so it can be neither wiped nor copied
+ * while a waiter exists.
+ */
+static void clock_sync_reset_state(struct precision_clock_sync *sync)
+{
+	memset(&sync->work, 0, sizeof(sync->work));
+	memset(&sync->config, 0, sizeof(sync->config));
+	memset(&sync->source_caps, 0, sizeof(sync->source_caps));
+	memset(&sync->sink_caps, 0, sizeof(sync->sink_caps));
+	memset(&sync->discipline, 0, sizeof(sync->discipline));
+	memset(&sync->status, 0, sizeof(sync->status));
+	sync->last_update_uptime_ns = 0;
+	sync->generation = 0;
+	sync->source_lost = false;
+	sync->has_last_update_uptime = false;
+}
+
+/*
+ * Capture the instance incarnation before waiting for the lifecycle lock.
+ * A call that is descheduled in that window must not resume on an instance
+ * that has since been released and initialized again.
+ */
+static int clock_sync_lock_lifecycle(struct precision_clock_sync *sync, uint32_t *incarnation)
+{
+	int ret;
+
+	ret = k_mutex_lock(&sync->lock, K_FOREVER);
+	if (ret < 0) {
+		return ret;
+	}
+
+	*incarnation = sync->incarnation;
+	(void)k_mutex_unlock(&sync->lock);
+
+	return k_mutex_lock(&sync->lifecycle_lock, K_FOREVER);
+}
+
+/*
+ * A clock adapter is invoked by the synchronization work handler. A lifecycle
+ * call made recursively by such an adapter cannot wait for that same handler
+ * to finish.
+ */
+static bool clock_sync_cancel_would_deadlock(struct precision_clock_sync *sync)
+{
+	return k_current_get() == k_sys_work_q.thread_id &&
+	       (k_work_delayable_busy_get(&sync->work) & K_WORK_RUNNING) != 0U;
+}
+
+/*
+ * Synchronously cancel without a stack-allocated k_work_sync. Such an object
+ * is not coherent on the thread stack when CONFIG_KERNEL_COHERENCE is set.
+ * The lifecycle lock and cleared running flag prevent any new scheduling
+ * while the busy state is polled.
+ */
+static void clock_sync_cancel_work(struct precision_clock_sync *sync)
+{
+	(void)k_work_cancel_delayable(&sync->work);
+
+	while (k_work_delayable_busy_get(&sync->work) != 0) {
+		k_sleep(K_TICKS(1));
+	}
+}
+
 int precision_clock_sync_init(struct precision_clock_sync *sync,
 			      const struct precision_clock_sync_config *config)
 {
@@ -651,35 +772,61 @@ int precision_clock_sync_init(struct precision_clock_sync *sync,
 	struct precision_clock_caps source_caps;
 	struct precision_clock_caps sink_caps;
 	struct precision_pi_discipline discipline;
+	bool reinit;
 	int ret;
 
 	if (sync == NULL || config == NULL) {
 		return -EINVAL;
 	}
+
+	/*
+	 * Re-initialization has to serialize against lifecycle calls that are
+	 * already blocked on the lifecycle lock, and must never wipe the locks
+	 * themselves while a thread is waiting on them. The first
+	 * initialization cannot take the lock because it does not exist yet;
+	 * callers own that window, as they do for any zero-initialized object.
+	 */
+	reinit = sync->locks_ready;
+	if (reinit) {
+		ret = k_mutex_lock(&sync->lifecycle_lock, K_FOREVER);
+		if (ret < 0) {
+			return ret;
+		}
+	}
+
 	if (sync->initialized) {
+		if (reinit) {
+			(void)k_mutex_unlock(&sync->lifecycle_lock);
+		}
 		return -EBUSY;
 	}
 
 	effective_config = *config;
 	ret = clock_sync_preflight(&effective_config, &source_caps, &sink_caps);
+	if (ret == 0) {
+		ret = precision_pi_init(&discipline, &effective_config.pi);
+	}
 	if (ret < 0) {
+		if (reinit) {
+			(void)k_mutex_unlock(&sync->lifecycle_lock);
+		}
 		return ret;
 	}
 
-	ret = precision_pi_init(&discipline, &effective_config.pi);
-	if (ret < 0) {
-		return ret;
-	}
+	if (reinit) {
+		clock_sync_reset_state(sync);
+	} else {
+		memset(sync, 0, sizeof(*sync));
 
-	memset(sync, 0, sizeof(*sync));
-	ret = k_mutex_init(&sync->lifecycle_lock);
-	if (ret < 0) {
-		return ret;
-	}
+		ret = k_mutex_init(&sync->lifecycle_lock);
+		if (ret == 0) {
+			ret = k_mutex_init(&sync->lock);
+		}
+		if (ret < 0) {
+			return ret;
+		}
 
-	ret = k_mutex_init(&sync->lock);
-	if (ret < 0) {
-		return ret;
+		sync->locks_ready = true;
 	}
 
 	sync->config = effective_config;
@@ -687,33 +834,51 @@ int precision_clock_sync_init(struct precision_clock_sync *sync,
 	sync->sink_caps = sink_caps;
 	sync->discipline = discipline;
 	clock_sync_status_init(&sync->status, &effective_config, false);
+	k_work_init_delayable(&sync->work, clock_sync_work_handler);
+
+	/*
+	 * Publish the instance under the state lock the readers use. The
+	 * release pairs with their acquire, so a reader that observes the
+	 * flag also observes the state written above it on targets that do
+	 * not order stores.
+	 */
+	(void)k_mutex_lock(&sync->lock, K_FOREVER);
+	sync->incarnation++;
 	sync->initialized = true;
+	(void)k_mutex_unlock(&sync->lock);
+
+	if (reinit) {
+		(void)k_mutex_unlock(&sync->lifecycle_lock);
+	}
 
 	return 0;
 }
 
 int precision_clock_sync_start(struct precision_clock_sync *sync)
 {
+	uint32_t incarnation;
 	int ret;
 
-	if (sync == NULL || !sync->initialized) {
+	if (sync == NULL || !sync->locks_ready) {
 		return -EINVAL;
 	}
 
-	ret = k_mutex_lock(&sync->lifecycle_lock, K_FOREVER);
+	ret = clock_sync_lock_lifecycle(sync, &incarnation);
 	if (ret < 0) {
 		return ret;
 	}
 
 	(void)k_mutex_lock(&sync->lock, K_FOREVER);
-	if (sync->status.running) {
+	if (!sync->initialized || sync->incarnation != incarnation) {
+		ret = -EINVAL;
+	} else if (sync->status.running) {
 		ret = -EALREADY;
 	} else if (sync->status.state == PRECISION_SYNC_FAULT) {
 		ret = -EIO;
 	} else {
 		sync->generation++;
 		sync->status.running = true;
-		ret = 0;
+		ret = clock_sync_reschedule_locked(sync, K_NO_WAIT);
 	}
 	(void)k_mutex_unlock(&sync->lock);
 	(void)k_mutex_unlock(&sync->lifecycle_lock);
@@ -723,23 +888,84 @@ int precision_clock_sync_start(struct precision_clock_sync *sync)
 
 int precision_clock_sync_stop(struct precision_clock_sync *sync)
 {
+	uint32_t incarnation;
 	int ret;
 
-	if (sync == NULL || !sync->initialized) {
+	if (sync == NULL || !sync->locks_ready) {
 		return -EINVAL;
 	}
 
-	ret = k_mutex_lock(&sync->lifecycle_lock, K_FOREVER);
+	ret = clock_sync_lock_lifecycle(sync, &incarnation);
 	if (ret < 0) {
 		return ret;
 	}
 
 	(void)k_mutex_lock(&sync->lock, K_FOREVER);
+	if (!sync->initialized || sync->incarnation != incarnation) {
+		(void)k_mutex_unlock(&sync->lock);
+		(void)k_mutex_unlock(&sync->lifecycle_lock);
+		return -EINVAL;
+	}
+	if (clock_sync_cancel_would_deadlock(sync)) {
+		(void)k_mutex_unlock(&sync->lock);
+		(void)k_mutex_unlock(&sync->lifecycle_lock);
+		return -EDEADLK;
+	}
+
 	if (sync->status.running) {
 		sync->status.running = false;
 		sync->generation++;
 	}
 	(void)k_mutex_unlock(&sync->lock);
+	clock_sync_cancel_work(sync);
+	(void)k_mutex_unlock(&sync->lifecycle_lock);
+
+	return 0;
+}
+
+int precision_clock_sync_deinit(struct precision_clock_sync *sync)
+{
+	uint32_t incarnation;
+	int ret;
+
+	if (sync == NULL) {
+		return -EINVAL;
+	}
+
+	if (!sync->locks_ready) {
+		return 0;
+	}
+
+	ret = clock_sync_lock_lifecycle(sync, &incarnation);
+	if (ret < 0) {
+		return ret;
+	}
+
+	(void)k_mutex_lock(&sync->lock, K_FOREVER);
+	if (!sync->initialized || sync->incarnation != incarnation) {
+		(void)k_mutex_unlock(&sync->lock);
+		(void)k_mutex_unlock(&sync->lifecycle_lock);
+		return 0;
+	}
+	if (clock_sync_cancel_would_deadlock(sync)) {
+		(void)k_mutex_unlock(&sync->lock);
+		(void)k_mutex_unlock(&sync->lifecycle_lock);
+		return -EDEADLK;
+	}
+
+	/*
+	 * Clear the initialized flag before the cancel, which can block for a
+	 * whole update. A lifecycle call already waiting on the lifecycle lock
+	 * then observes the release and fails instead of resuming work on an
+	 * instance the caller considers gone.
+	 */
+	sync->initialized = false;
+	sync->status.running = false;
+	sync->generation++;
+	(void)k_mutex_unlock(&sync->lock);
+
+	clock_sync_cancel_work(sync);
+
 	(void)k_mutex_unlock(&sync->lifecycle_lock);
 
 	return 0;
@@ -747,23 +973,36 @@ int precision_clock_sync_stop(struct precision_clock_sync *sync)
 
 int precision_clock_sync_reset(struct precision_clock_sync *sync)
 {
+	uint32_t incarnation;
 	bool was_running;
 	int ret;
 
-	if (sync == NULL || !sync->initialized) {
+	if (sync == NULL || !sync->locks_ready) {
 		return -EINVAL;
 	}
 
-	ret = k_mutex_lock(&sync->lifecycle_lock, K_FOREVER);
+	ret = clock_sync_lock_lifecycle(sync, &incarnation);
 	if (ret < 0) {
 		return ret;
 	}
 
 	(void)k_mutex_lock(&sync->lock, K_FOREVER);
+	if (!sync->initialized || sync->incarnation != incarnation) {
+		(void)k_mutex_unlock(&sync->lock);
+		(void)k_mutex_unlock(&sync->lifecycle_lock);
+		return -EINVAL;
+	}
+	if (clock_sync_cancel_would_deadlock(sync)) {
+		(void)k_mutex_unlock(&sync->lock);
+		(void)k_mutex_unlock(&sync->lifecycle_lock);
+		return -EDEADLK;
+	}
+
 	was_running = sync->status.running;
 	sync->status.running = false;
 	sync->generation++;
 	(void)k_mutex_unlock(&sync->lock);
+	clock_sync_cancel_work(sync);
 
 	ret = precision_clock_adjust_rate(sync->config.sink, 0);
 
@@ -777,6 +1016,9 @@ int precision_clock_sync_reset(struct precision_clock_sync *sync)
 		sync->has_last_update_uptime = false;
 		sync->source_lost = false;
 		sync->generation++;
+		if (was_running) {
+			ret = clock_sync_reschedule_locked(sync, K_NO_WAIT);
+		}
 	}
 	(void)k_mutex_unlock(&sync->lock);
 	(void)k_mutex_unlock(&sync->lifecycle_lock);
@@ -789,13 +1031,18 @@ int precision_clock_sync_get_status(struct precision_clock_sync *sync,
 {
 	int ret;
 
-	if (sync == NULL || status == NULL || !sync->initialized) {
+	if (sync == NULL || status == NULL || !sync->locks_ready) {
 		return -EINVAL;
 	}
 
 	ret = k_mutex_lock(&sync->lock, K_FOREVER);
 	if (ret < 0) {
 		return ret;
+	}
+
+	if (!sync->initialized) {
+		(void)k_mutex_unlock(&sync->lock);
+		return -EINVAL;
 	}
 
 	*status = sync->status;
@@ -829,11 +1076,15 @@ int precision_clock_sync_run_once_at(struct precision_clock_sync *sync, uint32_t
 	struct clock_sync_source_state source_state;
 	int ret;
 
-	if (sync == NULL || !sync->initialized || now_uptime_ns < 0) {
+	if (sync == NULL || !sync->locks_ready || now_uptime_ns < 0) {
 		return -EINVAL;
 	}
 
 	(void)k_mutex_lock(&sync->lock, K_FOREVER);
+	if (!sync->initialized) {
+		(void)k_mutex_unlock(&sync->lock);
+		return -EINVAL;
+	}
 	if (!sync->status.running || sync->generation != generation) {
 		(void)k_mutex_unlock(&sync->lock);
 		return -ECANCELED;
