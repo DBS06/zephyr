@@ -44,6 +44,8 @@ Major enhancements with this release include:
   Zephyr 4.5 adds several new subsystem APIs, including:
 
   - :ref:`Video <video_api>` for controlling video drivers
+  - :ref:`Precision Timing <precision_timing>` for domain-qualified timestamps, clock
+    discipline, and clock-to-clock synchronization
 
 An overview of the changes required or recommended when migrating your application from Zephyr
 v4.4.0 to Zephyr v4.5.0 can be found in the separate :ref:`migration guide<migration_4.5>`.
@@ -319,6 +321,17 @@ New APIs and options
   * :c:macro:`LOG_INST_DBG_PM_DEVICE_RUNTIME_PUT`
   * :c:macro:`LOG_INST_WRN_PM_DEVICE_RUNTIME_PUT`
   * :c:macro:`LOG_INST_ERR_PM_DEVICE_RUNTIME_PUT`
+
+* Precision Timing
+
+  * :kconfig:option:`CONFIG_PRECISION_TIMING`
+  * :kconfig:option:`CONFIG_PRECISION_TIMING_PI_KP`
+  * :kconfig:option:`CONFIG_PRECISION_TIMING_PI_KI`
+  * :kconfig:option:`CONFIG_PRECISION_SOFTWARE_CLOCK`
+  * :kconfig:option:`CONFIG_PRECISION_CLOCK_SYNC_SERVICE`
+  * :kconfig:option:`CONFIG_PRECISION_REALTIME_BRIDGE`
+  * :kconfig:option:`CONFIG_PRECISION_TIMING_SHELL`
+  * :kconfig:option:`CONFIG_PRECISION_TIMING_SHELL_MAX_INSTANCES`
 
 * Ring buffer
 
