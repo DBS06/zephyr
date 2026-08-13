@@ -5,6 +5,7 @@
 
 menuconfig PRECISION_TIMING
 	bool "Precision timing infrastructure"
+	depends on SYS_CLOCK_EXISTS
 	help
 	  Enable protocol-neutral precision timing helpers for domain-qualified
 	  timestamps, clock adapters, mappings, and clock discipline.

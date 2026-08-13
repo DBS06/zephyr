@@ -22,9 +22,14 @@ int precision_clock_read(const struct precision_clock *precision_clk,
 		return -ENOTSUP;
 	}
 
+	*tp = (struct precision_time_point){0};
 	ret = precision_clk->api->read(precision_clk, tp);
 	if (ret == 0 && tp->domain.type == PRECISION_TIME_DOMAIN_INVALID) {
 		tp->domain = precision_clk->domain;
+	}
+
+	if (ret == 0 && !precision_time_domain_equal(&tp->domain, &precision_clk->domain)) {
+		return -EINVAL;
 	}
 
 	return ret;

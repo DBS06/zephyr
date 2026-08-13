@@ -61,7 +61,16 @@ struct precision_clock;
 
 /** Operations implemented by a precision clock adapter. */
 struct precision_clock_api {
-	/** Read the current clock value. */
+	/**
+	 * Read the current clock value.
+	 *
+	 * The clock abstraction initializes @p tp before calling the adapter.
+	 * The adapter must populate @c tp->time and may either populate
+	 * @c tp->domain with the domain that the value belongs to, or leave its
+	 * type as @ref PRECISION_TIME_DOMAIN_INVALID to accept the domain
+	 * declared by the clock instance. A populated domain that differs from
+	 * the declared domain is rejected.
+	 */
 	int (*read)(const struct precision_clock *precision_clk, struct precision_time_point *tp);
 	/** Set the current clock value. */
 	int (*set)(const struct precision_clock *precision_clk,

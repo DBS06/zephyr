@@ -691,7 +691,17 @@ static int fake_clock_read(const struct precision_clock *precision_clk,
 	struct fake_clock_data *data = (struct fake_clock_data *)precision_clk->adapter;
 
 	tp->time = data->time;
-	tp->domain = precision_clk->domain;
+
+	return 0;
+}
+
+static int fake_clock_read_unexpected_domain(const struct precision_clock *precision_clk,
+					     struct precision_time_point *tp)
+{
+	struct fake_clock_data *data = (struct fake_clock_data *)precision_clk->adapter;
+
+	tp->time = data->time;
+	tp->domain = source_domain;
 
 	return 0;
 }
@@ -721,6 +731,10 @@ static const struct precision_clock_api fake_clock_api = {
 	.adjust_rate = fake_clock_adjust_rate,
 };
 
+static const struct precision_clock_api unexpected_domain_clock_api = {
+	.read = fake_clock_read_unexpected_domain,
+};
+
 ZTEST(precision_timing, test_precision_clock_checks_domains_and_unsupported_ops)
 {
 	struct fake_clock_data data = {
@@ -748,6 +762,23 @@ ZTEST(precision_timing, test_precision_clock_checks_domains_and_unsupported_ops)
 	zassert_equal(precision_clock_adjust_phase(&precision_clk, 1), -ENOTSUP);
 	zassert_ok(precision_clock_adjust_rate(&precision_clk, 1234));
 	zassert_equal(data.rate_ppb, 1234);
+}
+
+ZTEST(precision_timing, test_precision_clock_rejects_unexpected_read_domain)
+{
+	struct fake_clock_data data = {
+		.time = 100,
+	};
+	struct precision_clock precision_clk = {
+		.api = &unexpected_domain_clock_api,
+		.adapter = &data,
+		.domain = local_domain,
+	};
+	struct precision_time_point tp;
+
+	zassert_equal(precision_clock_read(&precision_clk, &tp), -EINVAL);
+	zassert_equal(tp.time, 100);
+	zassert_true(precision_time_domain_equal(&tp.domain, &source_domain));
 }
 
 ZTEST(precision_timing, test_pi_init_rejects_outlier_without_sample_count)
