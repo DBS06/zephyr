@@ -126,6 +126,13 @@ enum ptp_port_state ptp_btca_state_decision(struct ptp_port *port)
 	return ctx ? ctx->decision : PTP_PS_LISTENING;
 }
 
+enum ptp_port_state ptp_port_state(struct ptp_port *port)
+{
+	struct port_stub_ctx *ctx = ctx_for_port(port, false);
+
+	return ctx ? ctx->decision : PTP_PS_LISTENING;
+}
+
 void ptp_port_event_handle(struct ptp_port *port, enum ptp_port_event event, bool tt_diff)
 {
 	struct port_stub_ctx *ctx = ctx_for_port(port, false);
@@ -221,6 +228,9 @@ static void init_foreign(struct ptp_foreign_tt_clock *foreign, struct ptp_port *
 
 	k_fifo_init(&foreign->messages);
 	if (announce_msg) {
+		foreign->current_utc_offset = (int16_t)announce_msg->announce.current_utc_offset;
+		foreign->time_properties_flags = announce_msg->header.flags[1];
+		foreign->time_source = announce_msg->announce.time_src;
 		foreign->messages_count = 1;
 		k_fifo_put(&foreign->messages, announce_msg);
 	}
@@ -462,8 +472,10 @@ ZTEST(ptp_clock_decision, test_time_receiver_update_path)
 	struct ptp_current_ds *cds = clock_current_ds_mut();
 	struct ptp_parent_ds *pds = clock_parent_ds_mut();
 	struct ptp_time_prop_ds *tpds = clock_time_prop_ds_mut();
+	const uint8_t expected_time_properties_flags = 0x5A;
 
-	init_announce_msg(&msg, 0x80, 111, 112, 6, 44, 0x5A);
+	init_announce_msg(&msg, 0x80, 111, 112, 6, 44, expected_time_properties_flags);
+	msg.announce.time_src = PTP_TIME_SRC_GNSS;
 	init_port(&port, 0x41, 1);
 	init_foreign(&foreign, &port, make_foreign_desc(0x55, 7, 120, 100, 6), &msg);
 	map_port(&port, PTP_PS_TIME_RECEIVER, &foreign);
@@ -483,7 +495,8 @@ ZTEST(ptp_clock_decision, test_time_receiver_update_path)
 
 	zassert_equal(tpds->current_utc_offset, msg.announce.current_utc_offset,
 		      "UTC offset mismatch");
-	zassert_equal(tpds->flags, msg.header.flags[1], "time_prop flags mismatch");
+	zassert_equal(tpds->flags, expected_time_properties_flags, "time_prop flags mismatch");
+	zassert_equal(tpds->time_src, PTP_TIME_SRC_GNSS, "time source mismatch");
 	assert_single_event(&port, PTP_EVT_RS_TIME_RECEIVER);
 }
 

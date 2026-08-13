@@ -18,6 +18,7 @@
 #include <zephyr/kernel.h>
 
 #include <zephyr/net/socket.h>
+#include <zephyr/precision_timing/precision_pi.h>
 #include <zephyr/sys/slist.h>
 
 #include "ds.h"
@@ -35,6 +36,38 @@ extern "C" {
 
 /* PTP Clock structure declaration. */
 struct ptp_clock;
+
+/** Coherent snapshot of the PTP receiver and synchronization state. */
+struct ptp_clock_sync_snapshot {
+	/** Current state of the PHC synchronization discipline. */
+	enum precision_sync_state state;
+	/** Most recently accepted receiver-minus-transmitter offset in nanoseconds. */
+	int64_t last_offset_ns;
+	/** Sequence counter incremented for every accepted observation. */
+	uint64_t observation_sequence;
+	/** Generation of synchronization readiness evidence. */
+	uint64_t readiness_generation;
+	/** Accepted observations in the current source generation. */
+	uint32_t accepted_in_generation;
+	/** Kernel uptime of the most recently accepted observation. */
+	int64_t last_update_uptime_ms;
+	/** Selected source port identity. */
+	struct ptp_port_id source_port_id;
+	/** Selected grandmaster identity. */
+	ptp_clk_id grandmaster_id;
+	/** Announced TAI-minus-UTC offset. */
+	int16_t current_utc_offset;
+	/** Announced IEEE 1588 time-properties flags. */
+	uint8_t time_properties_flags;
+	/** Announced IEEE 1588 time source. */
+	uint8_t time_source;
+	/** Whether the discipline retains an accepted observation. */
+	bool has_observation;
+	/** Actual state of the receiver port. */
+	enum ptp_port_state port_state;
+	/** Whether the receiver's selected source is active. */
+	bool source_selected;
+};
 
 /**
  * @brief Types of PTP Clocks.
@@ -78,6 +111,12 @@ struct ptp_foreign_tt_clock {
 	uint16_t	   messages_count;
 	/** Generic dataset of the Foreign timeTransmitter for BTCA. */
 	struct ptp_dataset dataset;
+	/** Latest announced TAI-minus-UTC offset. */
+	int16_t current_utc_offset;
+	/** Latest announced IEEE 1588 time-properties flags. */
+	uint8_t time_properties_flags;
+	/** Latest announced time source. */
+	uint8_t time_source;
 	/** Pointer to the receiver. */
 	struct ptp_port	   *port;
 };
@@ -113,6 +152,26 @@ void ptp_clock_check_source_timeout(void);
  *			        current PTP Time Transmitter, in seconds.
  */
 void ptp_clock_sync_interval_update(int8_t log_sync_interval);
+
+/**
+ * @brief Copy a coherent snapshot of PTP receiver synchronization state.
+ *
+ * The observation sequence does not reset when the servo is reset, so callers
+ * can distinguish fresh observations even when consecutive offsets are equal
+ * or zero. The returned state is scoped to @p iface and copied atomically with
+ * respect to PTP state publication.
+ *
+ * @param[in] iface Network interface whose receiver state is requested.
+ * @param[out] snapshot Destination for the snapshot.
+ *
+ * @retval 0 on success.
+ * @retval -EINVAL if an argument is null.
+ * @retval -ENOENT if @p iface is not the selected receiver interface.
+ */
+int ptp_clock_sync_snapshot_get(struct net_if *iface, struct ptp_clock_sync_snapshot *snapshot);
+
+/** Publish a PTP port state transition to synchronization snapshot readers. */
+void ptp_clock_sync_context_changed(struct ptp_port *port);
 
 /**
  * @brief Function processing received PTP Management message at the PTP Clock level.

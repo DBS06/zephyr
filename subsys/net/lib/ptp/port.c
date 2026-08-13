@@ -1588,6 +1588,7 @@ int port_state_update(struct ptp_port *port, enum ptp_port_event event, bool tt_
 			port_state_str(next_state));
 
 		port->port_ds.state = next_state;
+		ptp_clock_sync_context_changed(port);
 		return 1;
 	}
 
@@ -2020,10 +2021,24 @@ struct ptp_foreign_tt_clock *ptp_port_best_foreign(struct ptp_port *port)
 	return port->best;
 }
 
+static bool foreign_announce_dataset_changed(const struct ptp_foreign_tt_clock *foreign,
+					     const struct ptp_msg *msg)
+{
+	return !ptp_port_id_eq(&foreign->dataset.sender, &msg->header.src_port_id) ||
+	       foreign->dataset.priority1 != msg->announce.gm_priority1 ||
+	       foreign->dataset.priority2 != msg->announce.gm_priority2 ||
+	       foreign->dataset.steps_rm != msg->announce.steps_rm ||
+	       memcmp(&foreign->dataset.clk_quality, &msg->announce.gm_clk_quality,
+		      sizeof(foreign->dataset.clk_quality)) != 0 ||
+	       memcmp(&foreign->dataset.clk_id, &msg->announce.gm_id,
+		      sizeof(foreign->dataset.clk_id)) != 0;
+}
+
 int ptp_port_add_foreign_tt(struct ptp_port *port, struct ptp_msg *msg)
 {
 	struct ptp_foreign_tt_clock *foreign = NULL;
 	struct ptp_msg *last = NULL;
+	bool time_properties_changed = false;
 	int diff = 0;
 
 	SYS_SLIST_FOR_EACH_CONTAINER(&port->foreign_list, foreign, node) {
@@ -2059,13 +2074,21 @@ int ptp_port_add_foreign_tt(struct ptp_port *port, struct ptp_msg *msg)
 	if (foreign->messages_count > 0) {
 		last = (struct ptp_msg *)k_fifo_peek_tail(&foreign->messages);
 		diff = ptp_msg_announce_cmp(&msg->announce, &last->announce);
+		time_properties_changed =
+			foreign->current_utc_offset != (int16_t)msg->announce.current_utc_offset ||
+			foreign->time_properties_flags != msg->header.flags[1] ||
+			foreign->time_source != msg->announce.time_src;
 	}
 
+	foreign->current_utc_offset = (int16_t)msg->announce.current_utc_offset;
+	foreign->time_properties_flags = msg->header.flags[1];
+	foreign->time_source = msg->announce.time_src;
 	ptp_msg_ref(msg);
 	foreign->messages_count++;
 	k_fifo_put(&foreign->messages, (void *)msg);
 
-	return (foreign->messages_count == FOREIGN_TIME_TRANSMITTER_THRESHOLD ? 1 : 0) || diff;
+	return (foreign->messages_count == FOREIGN_TIME_TRANSMITTER_THRESHOLD ? 1 : 0) || diff ||
+	       time_properties_changed;
 }
 
 void ptp_port_free_foreign_tts(struct ptp_port *port)
@@ -2086,6 +2109,8 @@ int ptp_port_update_current_time_transmitter(struct ptp_port *port, struct ptp_m
 {
 	struct ptp_foreign_tt_clock *foreign = port->best;
 	struct ptp_msg *last = NULL;
+	bool time_properties_changed;
+	int diff;
 
 	if (!foreign ||
 	    !ptp_port_id_eq(&msg->header.src_port_id, &foreign->dataset.sender)) {
@@ -2097,7 +2122,16 @@ int ptp_port_update_current_time_transmitter(struct ptp_port *port, struct ptp_m
 	if (foreign->messages_count > 0) {
 		last = (struct ptp_msg *)k_fifo_peek_tail(&foreign->messages);
 	}
+	diff = last != NULL ? ptp_msg_announce_cmp(&msg->announce, &last->announce)
+			    : (foreign_announce_dataset_changed(foreign, msg) ? 1 : 0);
+	time_properties_changed =
+		foreign->current_utc_offset != (int16_t)msg->announce.current_utc_offset ||
+		foreign->time_properties_flags != msg->header.flags[1] ||
+		foreign->time_source != msg->announce.time_src;
 
+	foreign->current_utc_offset = (int16_t)msg->announce.current_utc_offset;
+	foreign->time_properties_flags = msg->header.flags[1];
+	foreign->time_source = msg->announce.time_src;
 	ptp_msg_ref(msg);
 	foreign->messages_count++;
 	k_fifo_put(&foreign->messages, (void *)msg);
@@ -2107,11 +2141,14 @@ int ptp_port_update_current_time_transmitter(struct ptp_port *port, struct ptp_m
 				      1,
 				      port->port_ds.log_announce_interval);
 
-	if (last) {
-		return ptp_msg_announce_cmp(&msg->announce, &last->announce);
+	if (diff == 0 && time_properties_changed) {
+		/* These fields do not participate in BTCA comparison, but the clock
+		 * still needs a state-decision pass to publish the new time properties.
+		 */
+		diff = 1;
 	}
 
-	return 0;
+	return diff;
 }
 
 int ptp_port_management_msg_process(struct ptp_port *port,

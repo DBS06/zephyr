@@ -51,6 +51,7 @@ static uint16_t last_port_management_tlv_id;
 static int fake_port_event_calls;
 static struct ptp_foreign_tt_clock *fake_best_foreign;
 static enum ptp_port_state fake_state_decision;
+static enum ptp_port_state fake_current_port_state;
 
 static int fake_zvfs_eventfd(unsigned int initval, int flags)
 {
@@ -253,7 +254,7 @@ enum ptp_port_state ptp_port_state(struct ptp_port *port)
 {
 	ARG_UNUSED(port);
 
-	return PTP_PS_LISTENING;
+	return fake_current_port_state;
 }
 
 void ptp_port_event_handle(struct ptp_port *port, enum ptp_port_event event, bool tt_diff)
@@ -389,6 +390,7 @@ static void reset_clock_state(void)
 	fake_port_event_calls = 0;
 	fake_best_foreign = NULL;
 	fake_state_decision = PTP_PS_LISTENING;
+	fake_current_port_state = PTP_PS_LISTENING;
 }
 
 static void clock_wakeup_before(void *fixture)
@@ -718,6 +720,8 @@ ZTEST(ptp_clock_wakeup, test_synchronize_stops_when_phc_read_fails)
 	zassert_equal(ptp_clk.current_ds.mean_delay, 0, "clock fault should clear mean delay");
 	zassert_equal(ptp_clk.sync_discipline.state, PRECISION_SYNC_FAULT,
 		      "clock read failure should fault the discipline");
+	zassert_equal(ptp_clk.sync_snapshot.state, PRECISION_SYNC_FAULT,
+		      "clock read failure should fault the synchronization snapshot");
 	zassert_equal(fake_ptp_clock_set_calls, 0, "failed PHC read should not set the clock");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, 0,
 		      "failed PHC read should not adjust the clock");
@@ -767,6 +771,180 @@ ZTEST(ptp_clock_wakeup, test_synchronize_applies_pi_rate_adjustment)
 	zassert_equal(fake_ptp_clock_set_calls, 0, "small offset should not hard-step");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, 1, "rate adjust should be applied");
 	zassert_true(fake_ptp_clock_last_rate_ratio < 1.0, "positive offset should slow clock");
+}
+
+static void setup_sync_snapshot_receiver(struct ptp_port *port,
+					 struct ptp_foreign_tt_clock *foreign)
+{
+	ptp_clk.phc = &fake_phc;
+	ptp_clk.current_ds.mean_delay = (ptp_timeinterval)100 << 16;
+	ptp_clk.time_prop_ds.current_utc_offset = 37;
+	ptp_clk.time_prop_ds.flags = BIT(2) | BIT(3);
+	ptp_clk.time_prop_ds.time_src = PTP_TIME_SRC_GNSS;
+	port->iface = &fake_iface;
+	fake_current_port_state = PTP_PS_TIME_RECEIVER;
+	foreign->port = port;
+	foreign->dataset.sender.port_number = 1;
+	foreign->dataset.sender.clk_id.id[0] = 0x11;
+	foreign->dataset.clk_id.id[0] = 0x22;
+	ptp_clk.best = foreign;
+	ptp_clk.sync_source.sender = foreign->dataset.sender;
+	ptp_clk.sync_source.grandmaster = foreign->dataset.clk_id;
+	ptp_clk.sync_source.valid = true;
+	clock_sync_snapshot_update_source(port);
+}
+
+static void synchronize_zero_offset_samples(uint64_t first_ingress, uint32_t count)
+{
+	for (uint64_t i = 0; i < count; i++) {
+		uint64_t ingress = first_ingress + i;
+
+		fake_ptp_clock_time.nanosecond = ingress;
+		ptp_clock_synchronize(ingress, ingress - 100, true);
+	}
+}
+
+ZTEST(ptp_clock_wakeup, test_sync_snapshot_tracks_fresh_zero_offset_observations)
+{
+	struct ptp_foreign_tt_clock foreign = {0};
+	struct ptp_clock_sync_snapshot snapshot;
+	struct net_if other_iface;
+	struct ptp_port port = {0};
+
+	zassert_equal(ptp_clock_sync_snapshot_get(NULL, &snapshot), -EINVAL);
+	zassert_equal(ptp_clock_sync_snapshot_get(&fake_iface, NULL), -EINVAL);
+	zassert_equal(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot), -ENOENT);
+
+	setup_sync_snapshot_receiver(&port, &foreign);
+
+	zassert_equal(ptp_clock_sync_snapshot_get(&other_iface, &snapshot), -ENOENT);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_equal(snapshot.state, PRECISION_SYNC_UNSYNCED);
+	zassert_false(snapshot.has_observation);
+	zassert_equal(snapshot.observation_sequence, 0);
+
+	/* Equal and zero offsets are still distinct accepted observations. */
+	synchronize_zero_offset_samples(10000, SYNC_SERVO_LOCK_SAMPLES);
+
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_equal(snapshot.state, PRECISION_SYNC_LOCKED);
+	zassert_true(snapshot.has_observation);
+	zassert_equal(snapshot.last_offset_ns, 0);
+	zassert_equal(snapshot.observation_sequence, SYNC_SERVO_LOCK_SAMPLES);
+	zassert_equal(snapshot.accepted_in_generation, SYNC_SERVO_LOCK_SAMPLES);
+	zassert_equal(snapshot.port_state, PTP_PS_TIME_RECEIVER);
+	zassert_true(snapshot.source_selected);
+	zassert_equal(snapshot.current_utc_offset, 37);
+	zassert_equal(snapshot.time_properties_flags, BIT(2) | BIT(3));
+	zassert_equal(snapshot.time_source, PTP_TIME_SRC_GNSS);
+
+	zassert_ok(clock_servo_reset());
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_equal(snapshot.state, PRECISION_SYNC_UNSYNCED);
+	zassert_false(snapshot.has_observation);
+	zassert_equal(snapshot.accepted_in_generation, 0);
+	zassert_equal(snapshot.observation_sequence, SYNC_SERVO_LOCK_SAMPLES,
+		      "reset must not reuse an observation sequence");
+}
+
+ZTEST(ptp_clock_wakeup, test_sync_snapshot_invalidates_changed_context)
+{
+	struct ptp_foreign_tt_clock foreign = {0};
+	struct ptp_clock_sync_snapshot snapshot;
+	struct ptp_port port = {0};
+	uint64_t generation;
+
+	setup_sync_snapshot_receiver(&port, &foreign);
+	synchronize_zero_offset_samples(10000, SYNC_SERVO_LOCK_SAMPLES);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_equal(snapshot.state, PRECISION_SYNC_LOCKED);
+	generation = snapshot.readiness_generation;
+
+	ptp_clk.time_prop_ds.current_utc_offset = 36;
+	clock_sync_snapshot_update_source(&port);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_true(snapshot.readiness_generation > generation);
+	zassert_equal(snapshot.observation_sequence, SYNC_SERVO_LOCK_SAMPLES);
+	zassert_equal(snapshot.accepted_in_generation, 0);
+	zassert_false(snapshot.has_observation);
+	zassert_equal(snapshot.state, PRECISION_SYNC_UNSYNCED);
+	zassert_equal(snapshot.current_utc_offset, 36);
+	generation = snapshot.readiness_generation;
+	clock_sync_snapshot_update_source(&port);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_equal(snapshot.readiness_generation, generation,
+		      "publishing unchanged context must retain its generation");
+
+	ptp_clk.time_prop_ds.time_src = PTP_TIME_SRC_NTP;
+	clock_sync_snapshot_update_source(&port);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_true(snapshot.readiness_generation > generation);
+	zassert_false(snapshot.has_observation);
+	zassert_equal(snapshot.accepted_in_generation, 0);
+	zassert_equal(snapshot.time_source, PTP_TIME_SRC_NTP);
+
+	synchronize_zero_offset_samples(20000, SYNC_SERVO_LOCK_SAMPLES);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_equal(snapshot.accepted_in_generation, SYNC_SERVO_LOCK_SAMPLES);
+	generation = snapshot.readiness_generation;
+	foreign.dataset.sender.clk_id.id[0] = 0x33;
+	foreign.dataset.clk_id.id[0] = 0x44;
+	ptp_clk.sync_source.sender = foreign.dataset.sender;
+	ptp_clk.sync_source.grandmaster = foreign.dataset.clk_id;
+	clock_sync_snapshot_update_source(&port);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_true(snapshot.readiness_generation > generation);
+	zassert_false(snapshot.has_observation);
+	zassert_equal(snapshot.accepted_in_generation, 0);
+	zassert_equal(snapshot.source_port_id.clk_id.id[0], 0x33);
+	zassert_equal(snapshot.grandmaster_id.id[0], 0x44);
+
+	synchronize_zero_offset_samples(30000, SYNC_SERVO_LOCK_SAMPLES);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	generation = snapshot.readiness_generation;
+	fake_current_port_state = PTP_PS_UNCALIBRATED;
+	ptp_clock_sync_context_changed(&port);
+	zassert_equal(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot), -ENOENT);
+	zassert_true(ptp_clk.sync_snapshot.readiness_generation > generation);
+	zassert_equal(ptp_clk.sync_snapshot.port_state, PTP_PS_UNCALIBRATED);
+	zassert_false(ptp_clk.sync_snapshot.source_selected);
+	zassert_false(ptp_clk.sync_snapshot.has_observation);
+	zassert_equal(ptp_clk.sync_snapshot.accepted_in_generation, 0);
+	zassert_equal(ptp_clk.sync_selected_iface, &fake_iface,
+		      "the selected source must be retained while the port calibrates");
+	generation = ptp_clk.sync_snapshot.readiness_generation;
+	clock_sync_snapshot_update_source(&port);
+	zassert_equal(ptp_clk.sync_snapshot.readiness_generation, generation,
+		      "full publication must retain an uncalibrated source candidate");
+	zassert_equal(ptp_clk.sync_selected_iface, &fake_iface);
+
+	/* The uncalibrated-to-receiver transition happens outside the next BTCA run. */
+	fake_current_port_state = PTP_PS_TIME_RECEIVER;
+	ptp_clock_sync_context_changed(&port);
+	zassert_ok(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot));
+	zassert_true(snapshot.readiness_generation > generation);
+	zassert_equal(snapshot.port_state, PTP_PS_TIME_RECEIVER);
+	zassert_true(snapshot.source_selected);
+	zassert_false(snapshot.has_observation);
+	zassert_equal(snapshot.accepted_in_generation, 0);
+
+	generation = snapshot.readiness_generation;
+	fake_current_port_state = PTP_PS_PASSIVE;
+	ptp_clock_sync_context_changed(&port);
+	zassert_equal(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot), -ENOENT,
+		      "leaving receiver state must remove the interface immediately");
+	zassert_true(ptp_clk.sync_snapshot.readiness_generation > generation);
+	zassert_is_null(ptp_clk.sync_selected_iface,
+			"a non-calibrating port must not retain the source candidate");
+	generation = ptp_clk.sync_snapshot.readiness_generation;
+	ptp_clock_sync_context_changed(&port);
+	zassert_equal(ptp_clk.sync_snapshot.readiness_generation, generation,
+		      "re-publishing the same port state must retain its generation");
+	clock_sync_snapshot_update_source(&port);
+	zassert_equal(ptp_clock_sync_snapshot_get(&fake_iface, &snapshot), -ENOENT,
+		      "a non-receiver port must not remain the selected interface");
+	zassert_equal(ptp_clk.sync_snapshot.readiness_generation, generation,
+		      "the full publisher must agree with an immediate port transition");
 }
 
 ZTEST(ptp_clock_wakeup, test_source_timeout_check_arms_and_enters_holdover)
@@ -831,6 +1009,13 @@ ZTEST(ptp_clock_wakeup, test_source_timeout_check_arms_and_enters_holdover)
 	zassert_ok(precision_pi_get_status(&ptp_clk.sync_discipline, &status));
 	zassert_equal(status.state, PRECISION_SYNC_HOLDOVER,
 		      "an expired source timeout should enter holdover");
+	{
+		struct ptp_clock_sync_snapshot snapshot;
+
+		snapshot = ptp_clk.sync_snapshot;
+		zassert_equal(snapshot.state, PRECISION_SYNC_HOLDOVER,
+			      "snapshot should publish the timeout transition");
+	}
 	zassert_true(ptp_clk.sync_timeout_check.scheduled,
 		     "an expired timeout check should schedule the next check");
 

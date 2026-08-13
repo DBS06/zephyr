@@ -273,6 +273,11 @@ void ptp_clock_state_decision_req(void)
 	/* Tests call the state decision paths explicitly. */
 }
 
+void ptp_clock_sync_context_changed(struct ptp_port *port)
+{
+	ARG_UNUSED(port);
+}
+
 void ptp_clock_port_add(struct ptp_port *port)
 {
 	ARG_UNUSED(port);
@@ -646,6 +651,48 @@ ZTEST(ptp_port_events, test_event_gen_announce_threshold_requests_state_decision
 		      "first announce should prime threshold");
 	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_GENERAL), PTP_EVT_STATE_DECISION,
 		      "second announce should request state decision");
+
+	stop_port_timers(&port);
+	ptp_port_free_foreign_tts(&port);
+}
+
+ZTEST(ptp_port_events, test_event_gen_changed_time_properties_requests_state_decision)
+{
+	struct ptp_msg first_announce;
+	struct ptp_msg second_announce;
+	struct ptp_msg changed_utc_announce;
+	struct ptp_msg changed_flags_announce;
+	struct ptp_msg changed_source_announce;
+	struct ptp_msg unchanged_announce;
+	struct ptp_port port;
+
+	init_port(&port, PTP_PS_TIME_RECEIVER);
+	init_rx_msg(PTP_MSG_ANNOUNCE, 0x21);
+	scripted_rx_msg.announce.current_utc_offset = 37;
+	scripted_rx_msg.header.flags[1] = BIT(2) | BIT(3);
+	first_announce = scripted_rx_msg;
+	second_announce = scripted_rx_msg;
+	zassert_equal(ptp_port_add_foreign_tt(&port, &first_announce), 0);
+	zassert_equal(ptp_port_add_foreign_tt(&port, &second_announce), 1);
+	port.best = CONTAINER_OF(sys_slist_peek_head(&port.foreign_list),
+				 struct ptp_foreign_tt_clock, node);
+
+	changed_utc_announce = second_announce;
+	changed_utc_announce.announce.current_utc_offset = 36;
+	changed_flags_announce = second_announce;
+	changed_flags_announce.announce.current_utc_offset = 36;
+	changed_flags_announce.header.flags[1] ^= BIT(2);
+	changed_source_announce = changed_flags_announce;
+	changed_source_announce.announce.time_src = PTP_TIME_SRC_GNSS;
+	unchanged_announce = changed_source_announce;
+	zassert_equal(ptp_port_update_current_time_transmitter(&port, &changed_utc_announce), 1,
+		      "changed UTC offset should be published by the clock");
+	zassert_equal(ptp_port_update_current_time_transmitter(&port, &changed_flags_announce), 1,
+		      "changed time-properties flags should be published by the clock");
+	zassert_equal(ptp_port_update_current_time_transmitter(&port, &changed_source_announce), 1,
+		      "changed time source should be published by the clock");
+	zassert_equal(ptp_port_update_current_time_transmitter(&port, &unchanged_announce), 0,
+		      "unchanged time properties should not repeat state decision");
 
 	stop_port_timers(&port);
 	ptp_port_free_foreign_tts(&port);

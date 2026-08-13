@@ -321,6 +321,74 @@ ZTEST(ptp_foreign_master, test_update_current_tt_compares_against_previous_lates
 		      "updated announce is not queue tail");
 }
 
+ZTEST(ptp_foreign_master, test_update_current_tt_detects_properties_after_record_gap)
+{
+	struct ptp_foreign_tt_clock *foreign;
+	int ret;
+
+	init_announce_msg(&msg1, 0x34, 1, 110);
+	init_announce_msg(&msg2, 0x34, 1, 110);
+	init_announce_msg(&msg3, 0x34, 1, 110);
+	msg1.announce.current_utc_offset = 37;
+	msg2.announce.current_utc_offset = 37;
+	msg3.announce.current_utc_offset = 37;
+	msg1.header.flags[1] = BIT(2) | BIT(3);
+	msg2.header.flags[1] = BIT(2) | BIT(3);
+	msg3.header.flags[1] = BIT(2) | BIT(3);
+	msg1.announce.time_src = PTP_TIME_SRC_GNSS;
+	msg2.announce.time_src = PTP_TIME_SRC_GNSS;
+	msg3.announce.time_src = PTP_TIME_SRC_NTP;
+
+	zassert_equal(ptp_port_add_foreign_tt(&port, &msg1), 0, "first add failed");
+	zassert_equal(ptp_port_add_foreign_tt(&port, &msg2), 1, "second add failed");
+	foreign = ptp_port_best_foreign(&port);
+	zassert_not_null(foreign, "foreign clock missing");
+
+	/* A receiver may retain its selected foreign clock beyond the fixed
+	 * foreign-record window when its Announce receipt timeout is larger.
+	 */
+	set_local_uptime_expired(&msg1);
+	set_local_uptime_expired(&msg2);
+
+	ret = ptp_port_update_current_time_transmitter(&port, &msg3);
+	zassert_equal(ret, 1, "changed properties after a record gap must be published");
+	zassert_equal(foreign->messages_count, 1,
+		      "post-gap announce should restart the record set");
+	zassert_equal(k_fifo_peek_tail(&foreign->messages), &msg3,
+		      "post-gap announce is not queue tail");
+	zassert_equal(foreign->time_source, PTP_TIME_SRC_NTP,
+		      "post-gap time source was not retained");
+}
+
+ZTEST(ptp_foreign_master, test_update_current_tt_detects_grandmaster_after_record_gap)
+{
+	struct ptp_foreign_tt_clock *foreign;
+	int ret;
+
+	init_announce_msg(&msg1, 0x35, 1, 110);
+	init_announce_msg(&msg2, 0x35, 1, 110);
+	init_announce_msg(&msg3, 0x35, 1, 110);
+
+	zassert_equal(ptp_port_add_foreign_tt(&port, &msg1), 0, "first add failed");
+	zassert_equal(ptp_port_add_foreign_tt(&port, &msg2), 1, "second add failed");
+	foreign = ptp_port_best_foreign(&port);
+	zassert_not_null(foreign, "foreign clock missing");
+
+	set_local_uptime_expired(&msg1);
+	set_local_uptime_expired(&msg2);
+	set_clk_id(&msg3.announce.gm_id, 0xE5);
+
+	ret = ptp_port_update_current_time_transmitter(&port, &msg3);
+	zassert_equal(ret, 1, "changed grandmaster after a record gap must be published");
+	zassert_equal(foreign->messages_count, 1,
+		      "post-gap announce should restart the record set");
+	zassert_equal(k_fifo_peek_tail(&foreign->messages), &msg3,
+		      "post-gap announce is not queue tail");
+	zassert_mem_equal(&foreign->dataset.clk_id, &msg2.announce.gm_id,
+			  sizeof(foreign->dataset.clk_id),
+			  "regression setup must retain the previously selected grandmaster");
+}
+
 ZTEST(ptp_foreign_master, test_update_current_tt_falls_back_to_add_for_new_sender)
 {
 	int ret;

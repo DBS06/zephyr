@@ -102,6 +102,10 @@ struct ptp_clock {
 	struct precision_pi_discipline sync_discipline;
 	struct precision_time_mapping sync_mapping;
 	struct precision_deadline sync_timeout_check;
+	struct k_spinlock sync_snapshot_lock;
+	struct ptp_clock_sync_snapshot sync_snapshot;
+	struct net_if *sync_selected_iface;
+	struct net_if *sync_receiver_iface;
 	bool sync_discipline_ready;
 	struct {
 		struct ptp_port_id sender;
@@ -200,6 +204,123 @@ static struct precision_time_domain clock_phc_domain(void)
 	};
 }
 
+static void clock_sync_snapshot_invalidate_locked(enum precision_sync_state state)
+{
+	ptp_clk.sync_snapshot.readiness_generation++;
+	ptp_clk.sync_snapshot.accepted_in_generation = 0;
+	ptp_clk.sync_snapshot.last_offset_ns = 0;
+	ptp_clk.sync_snapshot.last_update_uptime_ms = 0;
+	ptp_clk.sync_snapshot.has_observation = false;
+	ptp_clk.sync_snapshot.state = state;
+}
+
+static void clock_sync_snapshot_invalidate(enum precision_sync_state state)
+{
+	k_spinlock_key_t key = k_spin_lock(&ptp_clk.sync_snapshot_lock);
+
+	clock_sync_snapshot_invalidate_locked(state);
+	k_spin_unlock(&ptp_clk.sync_snapshot_lock, key);
+}
+
+static uint64_t clock_sync_snapshot_generation(void)
+{
+	k_spinlock_key_t key;
+	uint64_t generation;
+
+	key = k_spin_lock(&ptp_clk.sync_snapshot_lock);
+	generation = ptp_clk.sync_snapshot.readiness_generation;
+	k_spin_unlock(&ptp_clk.sync_snapshot_lock, key);
+
+	return generation;
+}
+
+static void clock_sync_snapshot_accept(uint64_t generation, enum precision_sync_state state,
+				       precision_time_t offset_ns)
+{
+	int64_t now_ms = k_uptime_get();
+	k_spinlock_key_t key = k_spin_lock(&ptp_clk.sync_snapshot_lock);
+
+	if (ptp_clk.sync_snapshot.readiness_generation == generation &&
+	    ptp_clk.sync_snapshot.port_state == PTP_PS_TIME_RECEIVER &&
+	    ptp_clk.sync_snapshot.source_selected) {
+		ptp_clk.sync_snapshot.state = state;
+		ptp_clk.sync_snapshot.last_offset_ns = offset_ns;
+		ptp_clk.sync_snapshot.last_update_uptime_ms = now_ms;
+		ptp_clk.sync_snapshot.observation_sequence++;
+		ptp_clk.sync_snapshot.accepted_in_generation =
+			ptp_clk.sync_snapshot.accepted_in_generation == UINT32_MAX
+				? UINT32_MAX
+				: ptp_clk.sync_snapshot.accepted_in_generation + 1;
+		ptp_clk.sync_snapshot.has_observation = true;
+	}
+	k_spin_unlock(&ptp_clk.sync_snapshot_lock, key);
+}
+
+static void clock_sync_snapshot_update_source(struct ptp_port *port)
+{
+	struct ptp_foreign_tt_clock *best = ptp_clk.best;
+	struct ptp_port_id source_port_id = {0};
+	ptp_clk_id grandmaster_id = {0};
+	struct net_if *selected_iface = NULL;
+	struct net_if *receiver_iface = NULL;
+	enum ptp_port_state port_state = PTP_PS_INITIALIZING;
+	bool source_candidate = false;
+	bool source_selected = false;
+	k_spinlock_key_t key;
+	bool changed;
+
+	if (port != NULL && best != NULL && best->port == port && ptp_clk.sync_source.valid &&
+	    !ptp_clk.sync_source.reset_pending && clock_sync_source_matches(best)) {
+		selected_iface = port->iface;
+		source_port_id = best->dataset.sender;
+		grandmaster_id = best->dataset.clk_id;
+		source_candidate = true;
+	}
+
+	key = k_spin_lock(&ptp_clk.sync_snapshot_lock);
+	/* port_state_update() stores the new state before invoking its snapshot
+	 * callback. Reading the state under this lock makes the full publisher and
+	 * that callback converge regardless of which one acquires the lock first.
+	 */
+	if (port != NULL) {
+		port_state = ptp_port_state(port);
+	}
+	if (port_state != PTP_PS_UNCALIBRATED && port_state != PTP_PS_TIME_RECEIVER) {
+		selected_iface = NULL;
+		memset(&source_port_id, 0, sizeof(source_port_id));
+		memset(&grandmaster_id, 0, sizeof(grandmaster_id));
+		source_candidate = false;
+	}
+	source_selected = source_candidate && port_state == PTP_PS_TIME_RECEIVER;
+	receiver_iface = source_selected ? selected_iface : NULL;
+
+	changed = ptp_clk.sync_selected_iface != selected_iface ||
+		  ptp_clk.sync_receiver_iface != receiver_iface ||
+		  ptp_clk.sync_snapshot.port_state != port_state ||
+		  ptp_clk.sync_snapshot.source_selected != source_selected ||
+		  !ptp_port_id_eq(&ptp_clk.sync_snapshot.source_port_id, &source_port_id) ||
+		  !ptp_clock_id_eq(&ptp_clk.sync_snapshot.grandmaster_id, &grandmaster_id) ||
+		  ptp_clk.sync_snapshot.current_utc_offset !=
+			  ptp_clk.time_prop_ds.current_utc_offset ||
+		  ptp_clk.sync_snapshot.time_properties_flags != ptp_clk.time_prop_ds.flags ||
+		  ptp_clk.sync_snapshot.time_source != ptp_clk.time_prop_ds.time_src;
+
+	if (changed) {
+		clock_sync_snapshot_invalidate_locked(PRECISION_SYNC_UNSYNCED);
+	}
+
+	ptp_clk.sync_selected_iface = selected_iface;
+	ptp_clk.sync_receiver_iface = receiver_iface;
+	ptp_clk.sync_snapshot.source_port_id = source_port_id;
+	ptp_clk.sync_snapshot.grandmaster_id = grandmaster_id;
+	ptp_clk.sync_snapshot.current_utc_offset = ptp_clk.time_prop_ds.current_utc_offset;
+	ptp_clk.sync_snapshot.time_properties_flags = ptp_clk.time_prop_ds.flags;
+	ptp_clk.sync_snapshot.time_source = ptp_clk.time_prop_ds.time_src;
+	ptp_clk.sync_snapshot.port_state = port_state;
+	ptp_clk.sync_snapshot.source_selected = source_selected;
+	k_spin_unlock(&ptp_clk.sync_snapshot_lock, key);
+}
+
 static int clock_precision_phc(const struct precision_clock **phc)
 {
 	int ret;
@@ -276,12 +397,14 @@ static void clock_servo_init(void)
 	if (ret < 0) {
 		LOG_ERR("Failed to initialize PTP sync discipline (err %d)", ret);
 		precision_pi_fault(&ptp_clk.sync_discipline);
+		clock_sync_snapshot_invalidate(PRECISION_SYNC_FAULT);
 		return;
 	}
 
 	precision_time_mapping_init(&ptp_clk.sync_mapping, config.source_domain,
 				    config.local_domain);
 	precision_deadline_cancel(&ptp_clk.sync_timeout_check);
+	clock_sync_snapshot_invalidate(PRECISION_SYNC_UNSYNCED);
 }
 
 static void clock_servo_ensure_init(void)
@@ -444,8 +567,9 @@ static void clock_update_time_receiver(void)
 	ptp_clk.parent_ds.gm_priority1 = best_msg->announce.gm_priority1;
 	ptp_clk.parent_ds.gm_priority2 = best_msg->announce.gm_priority2;
 
-	ptp_clk.time_prop_ds.current_utc_offset = best_msg->announce.current_utc_offset;
-	ptp_clk.time_prop_ds.flags = best_msg->header.flags[1];
+	ptp_clk.time_prop_ds.current_utc_offset = ptp_clk.best->current_utc_offset;
+	ptp_clk.time_prop_ds.flags = ptp_clk.best->time_properties_flags;
+	ptp_clk.time_prop_ds.time_src = ptp_clk.best->time_source;
 }
 
 static void clock_check_pollfd(void)
@@ -528,7 +652,10 @@ const struct ptp_clock *ptp_clock_init(void)
 	}
 	ptp_clk.sync_source.valid = false;
 	ptp_clk.sync_source.reset_pending = false;
+	ptp_clk.sync_snapshot.readiness_generation = 1;
+	ptp_clk.sync_snapshot.port_state = PTP_PS_INITIALIZING;
 	clock_servo_init();
+	clock_sync_snapshot_update_source(NULL);
 
 	ret = zvfs_eventfd(0, ZVFS_EFD_NONBLOCK);
 	if (ret < 0) {
@@ -577,6 +704,7 @@ void ptp_clock_handle_state_decision_evt(void)
 		ptp_clk.sync_source.valid = false;
 		ptp_clk.sync_source.reset_pending = false;
 		ptp_clk.state_decision_event = false;
+		clock_sync_snapshot_update_source(NULL);
 		return;
 	}
 
@@ -622,6 +750,7 @@ void ptp_clock_handle_state_decision_evt(void)
 	}
 
 	if (!decision_requested) {
+		clock_sync_snapshot_update_source(sync_best != NULL ? sync_best->port : NULL);
 		return;
 	}
 
@@ -657,6 +786,7 @@ void ptp_clock_handle_state_decision_evt(void)
 				      tt_changed && port->state_decision == PTP_PS_TIME_RECEIVER);
 	}
 
+	clock_sync_snapshot_update_source(sync_best != NULL ? sync_best->port : NULL);
 	ptp_clk.state_decision_event = false;
 }
 
@@ -811,6 +941,7 @@ static void clock_servo_fault(void)
 	precision_time_mapping_invalidate(&ptp_clk.sync_mapping);
 	precision_deadline_cancel(&ptp_clk.sync_timeout_check);
 	clock_sync_data_reset();
+	clock_sync_snapshot_invalidate(PRECISION_SYNC_FAULT);
 }
 
 static int clock_servo_reset(void)
@@ -822,6 +953,7 @@ static int clock_servo_reset(void)
 	precision_pi_reset(&ptp_clk.sync_discipline);
 	precision_time_mapping_invalidate(&ptp_clk.sync_mapping);
 	precision_deadline_cancel(&ptp_clk.sync_timeout_check);
+	clock_sync_snapshot_invalidate(PRECISION_SYNC_UNSYNCED);
 
 	if (ptp_clk.phc == NULL) {
 		return 0;
@@ -932,6 +1064,7 @@ void ptp_clock_check_source_timeout(void)
 
 	if (discipline.state == PRECISION_SYNC_HOLDOVER) {
 		if (old_state != PRECISION_SYNC_HOLDOVER) {
+			clock_sync_snapshot_invalidate(PRECISION_SYNC_HOLDOVER);
 			LOG_WRN("PTP sync source timed out; entering holdover");
 		}
 		clock_servo_holdover_apply();
@@ -1022,8 +1155,10 @@ static void clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
 	uint64_t ingress_phc_delta;
 	uint64_t target_sec;
 	uint32_t target_nsec;
+	uint64_t readiness_generation;
 
 	clock_servo_ensure_init();
+	readiness_generation = clock_sync_snapshot_generation();
 	if (precision_pi_get_status(&ptp_clk.sync_discipline, &status) < 0 ||
 	    status.state == PRECISION_SYNC_FAULT) {
 		return;
@@ -1101,6 +1236,7 @@ static void clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
 	}
 
 	if (discipline.action == PRECISION_DISCIPLINE_STEP) {
+		clock_sync_snapshot_invalidate(PRECISION_SYNC_UNSYNCED);
 		LOG_WRN("Clock offset exceeds 1 second (t1=%" PRIu64 ".%09u t2=%" PRIu64
 			".%09u delay=%lldns offset=%lldns phc_now=%" PRIu64
 			".%09u |t2-phc|=%" PRIu64 "ns)",
@@ -1188,6 +1324,8 @@ static void clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
 		clock_servo_fault();
 		return;
 	}
+
+	clock_sync_snapshot_accept(readiness_generation, discipline.state, offset);
 }
 
 void ptp_clock_synchronize(uint64_t ingress, uint64_t egress, bool ingress_ts_valid)
@@ -1284,6 +1422,68 @@ const struct ptp_parent_ds *ptp_clock_parent_ds(void)
 const struct ptp_current_ds *ptp_clock_current_ds(void)
 {
 	return &ptp_clk.current_ds;
+}
+
+int ptp_clock_sync_snapshot_get(struct net_if *iface, struct ptp_clock_sync_snapshot *snapshot)
+{
+	k_spinlock_key_t key;
+
+	if (iface == NULL || snapshot == NULL) {
+		return -EINVAL;
+	}
+
+	key = k_spin_lock(&ptp_clk.sync_snapshot_lock);
+	if (iface != ptp_clk.sync_receiver_iface) {
+		k_spin_unlock(&ptp_clk.sync_snapshot_lock, key);
+		return -ENOENT;
+	}
+	*snapshot = ptp_clk.sync_snapshot;
+	k_spin_unlock(&ptp_clk.sync_snapshot_lock, key);
+
+	return 0;
+}
+
+void ptp_clock_sync_context_changed(struct ptp_port *port)
+{
+	k_spinlock_key_t key;
+	enum ptp_port_state state;
+	struct net_if *selected_iface;
+	bool source_selected;
+
+	if (port == NULL) {
+		return;
+	}
+
+	state = ptp_port_state(port);
+	key = k_spin_lock(&ptp_clk.sync_snapshot_lock);
+	/* The state callback may run outside the PTP worker, so it only consumes
+	 * the selected interface and source identity copied by the full publisher.
+	 * In particular, it must not dereference the mutable foreign-clock list.
+	 */
+	selected_iface = (state == PTP_PS_UNCALIBRATED || state == PTP_PS_TIME_RECEIVER) &&
+					 ptp_clk.sync_selected_iface == port->iface
+				 ? port->iface
+				 : NULL;
+	source_selected = state == PTP_PS_TIME_RECEIVER && selected_iface != NULL;
+	if ((ptp_clk.sync_selected_iface == port->iface ||
+	     ptp_clk.sync_receiver_iface == port->iface) &&
+	    (ptp_clk.sync_selected_iface != selected_iface ||
+	     ptp_clk.sync_receiver_iface != (source_selected ? port->iface : NULL) ||
+	     ptp_clk.sync_snapshot.port_state != state ||
+	     ptp_clk.sync_snapshot.source_selected != source_selected)) {
+		clock_sync_snapshot_invalidate_locked(PRECISION_SYNC_UNSYNCED);
+		ptp_clk.sync_selected_iface = selected_iface;
+		ptp_clk.sync_receiver_iface = source_selected ? port->iface : NULL;
+		ptp_clk.sync_snapshot.port_state = state;
+		ptp_clk.sync_snapshot.source_selected = source_selected;
+		if (selected_iface == NULL) {
+			memset(&ptp_clk.sync_snapshot.source_port_id, 0,
+			       sizeof(ptp_clk.sync_snapshot.source_port_id));
+			memset(&ptp_clk.sync_snapshot.grandmaster_id, 0,
+			       sizeof(ptp_clk.sync_snapshot.grandmaster_id));
+		}
+	}
+	k_spin_unlock(&ptp_clk.sync_snapshot_lock, key);
 }
 
 const struct ptp_time_prop_ds *ptp_clock_time_prop_ds(void)
