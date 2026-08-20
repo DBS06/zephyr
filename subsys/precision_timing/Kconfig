@@ -81,4 +81,20 @@ config PRECISION_PPS_OUTPUT_WORKQUEUE_PRIORITY
 	  output instances. A negative value is a cooperative priority.
 
 endif # PRECISION_PPS_OUTPUT
+
+config PRECISION_TIMING_SHELL
+	bool "Precision timing shell"
+	depends on SHELL
+	help
+	  Enable a runtime registry and shell commands for inspecting precision
+	  clocks and controlling scheduled clock outputs.
+
+config PRECISION_TIMING_SHELL_MAX_INSTANCES
+	int "Maximum number of precision timing shell instances"
+	default 4
+	range 1 16
+	depends on PRECISION_TIMING_SHELL
+	help
+	  Set the fixed capacity of the precision timing shell registry.
+
 endif # PRECISION_TIMING
