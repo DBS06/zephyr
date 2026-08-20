@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <limits.h>
 
+#include <zephyr/drivers/precision_clock_output.h>
 #include <zephyr/drivers/ptp_clock.h>
 #include <zephyr/sys/check.h>
 #include <zephyr/precision_timing/precision_clock_ptp.h>
@@ -160,6 +161,229 @@ static int precision_clock_ptp_get_caps(const struct precision_clock *precision_
 	return 0;
 }
 
+#ifdef CONFIG_PRECISION_CLOCK_OUTPUT
+static const struct precision_clock_output_provider *
+precision_clock_ptp_output_provider(const struct precision_clock_ptp_adapter *adapter)
+{
+	const struct ptp_clock_driver_api *api;
+
+	if (adapter == NULL || adapter->ptp_clock == NULL) {
+		return NULL;
+	}
+
+	api = DEVICE_API_GET(ptp_clock, adapter->ptp_clock);
+	if (api == NULL) {
+		return NULL;
+	}
+
+	return api->output;
+}
+
+static bool precision_clock_ptp_has_output(const struct precision_clock_output_provider *provider)
+{
+	return provider != NULL && provider->get_caps != NULL && provider->stop != NULL &&
+	       provider->get_status != NULL &&
+	       (provider->schedule_event != NULL || provider->start_waveform != NULL);
+}
+
+static int
+precision_clock_ptp_output_available(const struct device *ptp_clock,
+				     const struct precision_clock_output_provider *provider,
+				     bool *available)
+{
+	struct precision_clock_output_caps output_caps;
+	int ret;
+
+	*available = false;
+	if (!precision_clock_ptp_has_output(provider)) {
+		return 0;
+	}
+
+	ret = provider->get_caps(ptp_clock, 0U, &output_caps);
+	if (ret == -ENOTSUP) {
+		return 0;
+	}
+	if (ret < 0) {
+		return ret;
+	}
+
+	*available = output_caps.channel_count > 0U;
+
+	return 0;
+}
+
+static int precision_clock_ptp_get_output_caps(const struct precision_clock *precision_clk,
+					       uint32_t channel,
+					       struct precision_clock_output_caps *caps)
+{
+	struct precision_clock_ptp_adapter *adapter =
+		(struct precision_clock_ptp_adapter *)precision_clk->adapter;
+	const struct precision_clock_output_provider *provider;
+
+	if (adapter == NULL || caps == NULL) {
+		return -EINVAL;
+	}
+
+	if (!(adapter->caps.flags & PRECISION_CLOCK_CAP_SCHEDULED_OUTPUT)) {
+		return -ENOTSUP;
+	}
+
+	provider = precision_clock_ptp_output_provider(adapter);
+	if (provider == NULL || provider->get_caps == NULL) {
+		return -ENOTSUP;
+	}
+
+	return provider->get_caps(adapter->ptp_clock, channel, caps);
+}
+
+static int
+precision_clock_ptp_output_schedule_event(const struct precision_clock *precision_clk,
+					  uint32_t channel,
+					  const struct precision_clock_output_event_config *config)
+{
+	struct precision_clock_ptp_adapter *adapter =
+		(struct precision_clock_ptp_adapter *)precision_clk->adapter;
+	const struct precision_clock_output_provider *provider;
+	struct precision_clock_output_raw_event_config raw_config;
+
+	if (adapter == NULL || config == NULL) {
+		return -EINVAL;
+	}
+
+	if (!(adapter->caps.flags & PRECISION_CLOCK_CAP_SCHEDULED_OUTPUT)) {
+		return -ENOTSUP;
+	}
+
+	provider = precision_clock_ptp_output_provider(adapter);
+	if (provider == NULL || provider->schedule_event == NULL) {
+		return -ENOTSUP;
+	}
+
+	raw_config = (struct precision_clock_output_raw_event_config){
+		.target_time = config->target_time.time,
+		.edge = config->edge,
+	};
+
+	return provider->schedule_event(adapter->ptp_clock, channel, &raw_config);
+}
+
+static int precision_clock_ptp_output_start_waveform(
+	const struct precision_clock *precision_clk, uint32_t channel,
+	const struct precision_clock_output_waveform_config *config)
+{
+	struct precision_clock_ptp_adapter *adapter =
+		(struct precision_clock_ptp_adapter *)precision_clk->adapter;
+	const struct precision_clock_output_provider *provider;
+	struct precision_clock_output_raw_waveform_config raw_config;
+
+	if (adapter == NULL || config == NULL) {
+		return -EINVAL;
+	}
+
+	if (!(adapter->caps.flags & PRECISION_CLOCK_CAP_SCHEDULED_OUTPUT)) {
+		return -ENOTSUP;
+	}
+
+	provider = precision_clock_ptp_output_provider(adapter);
+	if (provider == NULL || provider->start_waveform == NULL) {
+		return -ENOTSUP;
+	}
+
+	raw_config = (struct precision_clock_output_raw_waveform_config){
+		.first_rising_time = config->first_rising_time.time,
+		.period_ns = config->period_ns,
+		.width_policy = config->width_policy,
+		.pulse_width_ns = config->pulse_width_ns,
+	};
+
+	return provider->start_waveform(adapter->ptp_clock, channel, &raw_config);
+}
+
+static int precision_clock_ptp_output_stop(const struct precision_clock *precision_clk,
+					   uint32_t channel)
+{
+	struct precision_clock_ptp_adapter *adapter =
+		(struct precision_clock_ptp_adapter *)precision_clk->adapter;
+	const struct precision_clock_output_provider *provider;
+
+	if (adapter == NULL) {
+		return -EINVAL;
+	}
+
+	if (!(adapter->caps.flags & PRECISION_CLOCK_CAP_SCHEDULED_OUTPUT)) {
+		return -ENOTSUP;
+	}
+
+	provider = precision_clock_ptp_output_provider(adapter);
+	if (provider == NULL || provider->stop == NULL) {
+		return -ENOTSUP;
+	}
+
+	return provider->stop(adapter->ptp_clock, channel);
+}
+
+static int precision_clock_ptp_get_output_status(const struct precision_clock *precision_clk,
+						 uint32_t channel,
+						 struct precision_clock_output_status *status)
+{
+	struct precision_clock_ptp_adapter *adapter =
+		(struct precision_clock_ptp_adapter *)precision_clk->adapter;
+	const struct precision_clock_output_provider *provider;
+	struct precision_clock_output_raw_status raw_status;
+	int ret;
+
+	if (adapter == NULL || status == NULL) {
+		return -EINVAL;
+	}
+
+	if (!(adapter->caps.flags & PRECISION_CLOCK_CAP_SCHEDULED_OUTPUT)) {
+		return -ENOTSUP;
+	}
+
+	provider = precision_clock_ptp_output_provider(adapter);
+	if (provider == NULL || provider->get_status == NULL) {
+		return -ENOTSUP;
+	}
+
+	ret = provider->get_status(adapter->ptp_clock, channel, &raw_status);
+	if (ret < 0) {
+		return ret;
+	}
+
+	*status = (struct precision_clock_output_status){
+		.configured = raw_status.configured,
+		.hardware_active_valid = raw_status.hardware_active_valid,
+		.hardware_active = raw_status.hardware_active,
+	};
+
+	if (!raw_status.configured) {
+		return 0;
+	}
+
+	status->kind = raw_status.kind;
+
+	switch (raw_status.kind) {
+	case PRECISION_CLOCK_OUTPUT_KIND_EVENT:
+		status->config.event.target_time.time = raw_status.config.event.target_time;
+		status->config.event.target_time.domain = precision_clk->domain;
+		status->config.event.edge = raw_status.config.event.edge;
+		break;
+	case PRECISION_CLOCK_OUTPUT_KIND_WAVEFORM:
+		status->config.waveform.first_rising_time.time =
+			raw_status.config.waveform.first_rising_time;
+		status->config.waveform.first_rising_time.domain = precision_clk->domain;
+		status->config.waveform.period_ns = raw_status.config.waveform.period_ns;
+		status->config.waveform.width_policy = raw_status.config.waveform.width_policy;
+		status->config.waveform.pulse_width_ns = raw_status.config.waveform.pulse_width_ns;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_PRECISION_CLOCK_OUTPUT */
+
 static uint32_t precision_clock_ptp_cap_flags(uint32_t ptp_flags)
 {
 	uint32_t flags = 0U;
@@ -187,7 +411,8 @@ static uint32_t precision_clock_ptp_cap_flags(uint32_t ptp_flags)
  * guarantee that ptp_clock_set(), ptp_clock_get(), ptp_clock_adjust(), and
  * ptp_clock_rate_adjust() already rely on. Rate adjustment limits stay generic
  * because a legacy driver cannot describe them. Phase adjustment is bounded by
- * the int argument accepted by ptp_clock_adjust().
+ * the int argument accepted by ptp_clock_adjust(). Scheduled output is derived
+ * separately from the optional output provider extension.
  */
 static uint32_t precision_clock_ptp_legacy_cap_flags(const struct ptp_clock_driver_api *api)
 {
@@ -219,6 +444,13 @@ static const struct precision_clock_api precision_clock_ptp_api = {
 	.adjust_phase = precision_clock_ptp_adjust_phase,
 	.adjust_rate = precision_clock_ptp_adjust_rate,
 	.get_caps = precision_clock_ptp_get_caps,
+#ifdef CONFIG_PRECISION_CLOCK_OUTPUT
+	.get_output_caps = precision_clock_ptp_get_output_caps,
+	.output_schedule_event = precision_clock_ptp_output_schedule_event,
+	.output_start_waveform = precision_clock_ptp_output_start_waveform,
+	.output_stop = precision_clock_ptp_output_stop,
+	.get_output_status = precision_clock_ptp_get_output_status,
+#endif /* CONFIG_PRECISION_CLOCK_OUTPUT */
 };
 
 int precision_clock_ptp_init(struct precision_clock_ptp_adapter *adapter,
@@ -227,6 +459,9 @@ int precision_clock_ptp_init(struct precision_clock_ptp_adapter *adapter,
 	const struct ptp_clock_driver_api *api;
 	struct ptp_clock_caps ptp_caps;
 	struct precision_clock_caps caps;
+#ifdef CONFIG_PRECISION_CLOCK_OUTPUT
+	bool output_available;
+#endif
 	int ret;
 
 	CHECKIF((adapter == NULL) || (ptp_clock == NULL)) {
@@ -269,6 +504,17 @@ int precision_clock_ptp_init(struct precision_clock_ptp_adapter *adapter,
 			return ret;
 		}
 	}
+
+#ifdef CONFIG_PRECISION_CLOCK_OUTPUT
+	ret = precision_clock_ptp_output_available(ptp_clock, api != NULL ? api->output : NULL,
+						   &output_available);
+	if (ret < 0) {
+		return ret;
+	}
+	if (output_available) {
+		caps.flags |= PRECISION_CLOCK_CAP_SCHEDULED_OUTPUT;
+	}
+#endif /* CONFIG_PRECISION_CLOCK_OUTPUT */
 
 	adapter->ptp_clock = ptp_clock;
 	adapter->caps = caps;
