@@ -158,6 +158,14 @@ menuconfig PTP_CLOCK_STM32_HAL
 
 if PTP_CLOCK_STM32_HAL
 
+config PTP_CLOCK_STM32_HAL_OUTPUT
+	bool "STM32 flexible scheduled PTP clock output"
+	default y if PRECISION_CLOCK_OUTPUT
+	help
+	  Enable the STM32 Ethernet MAC flexible scheduled-output channel. This
+	  option can be enabled for direct PTP clock API users independently of
+	  the protocol-neutral precision timing output API.
+
 config ETH_STM32_HAL_PTP_CLOCK_SRC_HZ
 	int "Frequency of the clock source for the PTP timer"
 	default 50000000
