@@ -1,0 +1,35 @@
+/*
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/inputmux/nxp-mcxn-inputmux.h>
+
+&pinctrl {
+	ptp_pps0_trig_out0_p3_20: ptp_pps0_trig_out0_p3_20 {
+		group0 {
+			pinmux = <TRIG_OUT0_PIO3_20>;
+			drive-strength = "low";
+			slew-rate = "fast";
+		};
+	};
+};
+
+&inputmux0 {
+	status = "okay";
+};
+
+&enet_ptp_clock {
+	pinctrl-0 = <&ptp_pps0_trig_out0_p3_20>;
+	pinctrl-names = "default";
+	mux-states = <&inputmux0 0 NXP_MCXN_INPUTMUX_ENET_PPS0_TO_EXT_TRIG0>;
+	output-gpios = <&gpio3 20 GPIO_ACTIVE_HIGH>;
+};
+
+&sai1 {
+	status = "disabled";
+};
+
+&flexcomm6_lpspi6 {
+	status = "disabled";
+};
