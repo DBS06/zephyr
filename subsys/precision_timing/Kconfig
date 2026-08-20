@@ -12,3 +12,50 @@ config PRECISION_TIMING
 	  The API is at experimental maturity as described by the Zephyr API
 	  lifecycle, so it may still change. The subsystem is a building block
 	  for protocols such as PTP and gPTP and does not change their maturity.
+
+if PRECISION_TIMING
+
+config PRECISION_CLOCK_OUTPUT
+	bool "Scheduled precision clock output"
+	help
+	  Enable protocol-neutral scheduled clock outputs. Providers can expose
+	  hardware-timed output channels that drive either a one-shot edge event or
+	  a periodic waveform, with explicit target or first-edge times, periods,
+	  and pulse-width policies in the owning precision clock's timescale.
+
+menuconfig PRECISION_PPS_OUTPUT
+	bool "Autonomous one-pulse-per-second clock output"
+	depends on PRECISION_CLOCK_OUTPUT
+	depends on MULTITHREADING
+	help
+	  Enable a runtime-configured service that autonomously arms and
+	  maintains a fixed one-second periodic clock output. Each caller-owned
+	  instance targets an application-supplied precision clock, channel, and
+	  pulse-width policy. Instances detect clock hard steps and unconfigured,
+	  mismatched, or inactive output, then stop and rearm the channel on
+	  their own schedule. Arming is not gated on PTP lock or any other
+	  synchronization protocol state.
+
+	  All instances share a single subsystem-owned dedicated workqueue whose
+	  resources are configured below.
+
+if PRECISION_PPS_OUTPUT
+
+config PRECISION_PPS_OUTPUT_WORKQUEUE_STACK_SIZE
+	int "PPS output dedicated workqueue stack size"
+	default 1024
+	help
+	  Stack size in bytes of the dedicated workqueue thread shared by all
+	  precision PPS output instances. The thread runs the periodic polls and
+	  invokes the instance callbacks, so it must accommodate the deepest
+	  callback the application installs.
+
+config PRECISION_PPS_OUTPUT_WORKQUEUE_PRIORITY
+	int "PPS output dedicated workqueue priority"
+	default SYSTEM_WORKQUEUE_PRIORITY
+	help
+	  Thread priority of the dedicated workqueue shared by all precision PPS
+	  output instances. A negative value is a cooperative priority.
+
+endif # PRECISION_PPS_OUTPUT
+endif # PRECISION_TIMING
