@@ -12,7 +12,9 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/ptp_clock.h>
 #include <zephyr/precision_timing/precision_clock_ptp.h>
-#include <zephyr/precision_timing/precision_timing.h>
+#include <zephyr/precision_timing/precision_deadline.h>
+#include <zephyr/precision_timing/precision_mapping.h>
+#include <zephyr/precision_timing/precision_pi.h>
 #include <zephyr/ztest.h>
 
 static const struct precision_time_domain source_domain = {
