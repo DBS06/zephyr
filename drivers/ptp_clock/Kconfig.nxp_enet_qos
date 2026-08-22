@@ -9,3 +9,24 @@ config PTP_CLOCK_NXP_ENET_QOS
 	select NET_L2_PTP_TIMESTAMPING
 	help
 	  Enable NXP ENET QoS PTP clock to support Ethernet timestamping.
+
+config PTP_CLOCK_NXP_ENET_QOS_OUTPUT
+	bool "NXP MCXN947 ENET QoS fixed PPS output"
+	depends on PTP_CLOCK_NXP_ENET_QOS
+	depends on PRECISION_CLOCK_OUTPUT
+	depends on SOC_MCXN947
+	select GPIO
+	select MUX
+	select MUX_NXP_INPUTMUX
+	select PINCTRL
+	help
+	  Enable the restricted MCXN947 ENET QoS PPS0 waveform provider. The
+	  provider exposes one fixed 1 Hz, one-PTP-clock pulse and gates its
+	  physical pin until before the requested first edge.
+
+	  The PTP clock devicetree node must provide pinctrl-0, a default entry in
+	  pinctrl-names, mux-states, and output-gpios. The pin selected as TRIG_OUT0
+	  by pinctrl-0 must be the same physical pad named by output-gpios: the
+	  driver stops and gates PPS by switching that pad to GPIO and driving it
+	  physically low. The mux state must route ENET PPS0 to the trigger input
+	  feeding TRIG_OUT0.
