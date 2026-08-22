@@ -139,6 +139,37 @@ Their PTP clocks retain fine timestamp correction; the output feature does
 not change the shared PHC to coarse correction. Other H7 variants are not
 covered by this device exclusion.
 
+The MCXN947 ENET QoS provider exposes one fixed 1 Hz output when
+:kconfig:option:`CONFIG_PTP_CLOCK_NXP_ENET_QOS_OUTPUT` is enabled. Only the
+provider-default hardware pulse width is supported; its physical width requires
+measurement and is not established by the PHC accumulator-update frequency.
+The selected pin route is opt-in because the pad can be shared with other
+peripherals.
+
+Before its accepted first edge, ``set()`` and ``adjust()`` hold the output low
+before changing the PHC phase, then re-evaluate routing against that same first
+edge. A backward step therefore cannot expose an earlier legacy PPS pulse.
+Once a routed output has reached the first edge, subsequent phase updates leave
+the route enabled. Rate-only adjustments do not change the pin route.
+
+A failure to hold a pending output low rejects the phase update and is reported
+by output status until a successful stop. A rearming failure is also returned
+to the phase-update caller, but the PHC phase may already have changed. If
+holding the output low during cleanup fails, the configuration and fault remain
+visible until stop succeeds.
+
+Public ``get()`` remains a nonblocking hardware register observation with or
+without scheduled output. The PTP API does not restrict reads to thread context,
+and gPTP event capture reads with interrupts locked. Output routing and PHC phase
+updates are serialized internally, but a public read is not serialized against
+a concurrent phase update.
+
+Native-simulator tests exercise the actual provider's routing decisions, phase
+updates, work cancellation, and cleanup ownership using register and pin-control
+test doubles. They do not establish physical pulse width, glitch-free pin
+switching, or absence of premature edges on MCXN947. Those properties require
+measurements on the selected board route before hardware validation is claimed.
+
 Autonomous PPS output
 *********************
 
