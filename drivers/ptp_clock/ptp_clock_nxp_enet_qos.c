@@ -213,7 +213,11 @@ static int ptp_clock_nxp_enet_qos_init(const struct device *dev)
 	data->base->MAC_TIMESTAMP_CONTROL |= ENET_MAC_TIMESTAMP_CONTROL_TSCFUPDT_MASK;
 
 	/* Step 4: set sub-second increment for 50 MHz PTP clock → 20 ns/tick */
+#if defined(ENET_MAC_SUB_SECOND_INCREMENT_SSINC)
+	data->base->MAC_SUB_SECOND_INCREMENT = ENET_MAC_SUB_SECOND_INCREMENT_SSINC(snsinc);
+#else
 	data->base->MAC_SUB_SECOND_INCREMENT = ENET_MAC_SUB_SECOND_INCREMENT_SNSINC(snsinc);
+#endif
 
 	/*
 	 * Step 5: load the nominal addend into the fine accumulator.
