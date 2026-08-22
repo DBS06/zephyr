@@ -8,8 +8,10 @@ tests:
   sample.net.pps_out:
     build_only: true
     platform_allow:
+      - frdm_mcxn947/mcxn947/cpu0
       - nucleo_h563zi
     integration_platforms:
+      - frdm_mcxn947/mcxn947/cpu0
       - nucleo_h563zi
     depends_on: eth
     tags:
