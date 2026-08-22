@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  NXP ENET QoS Precision Time Protocol clock.
+
+  On MCXN947, the optional fixed PPS output uses mux-states to route ENET PPS0
+  to the trigger input that feeds the TRIG_OUT0 pin selected by pinctrl-0. The
+  output-gpios property must name that same physical pad. The driver gates and
+  stops PPS by switching the pad from TRIG_OUT0 to GPIO and driving it
+  physically low.
+
+compatible: "nxp,enet-qos-ptp-clock"
+
+include:
+  - snps,dwmac-ptp-clock.yaml
+  - pinctrl-device.yaml
+  - mux-consumer.yaml
+
+properties:
+  output-gpios:
+    type: phandle-array
+    description: |
+      GPIO used to drive the externally routed PPS output physically low. This
+      must name the same physical pad that pinctrl-0 selects for TRIG_OUT0.
