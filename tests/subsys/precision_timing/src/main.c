@@ -124,6 +124,8 @@ static struct precision_time_mapping build_offset_mapping(void)
 
 ZTEST(precision_timing, test_scalar_conversions_check_bounds)
 {
+	const uint64_t max_sec = (uint64_t)PRECISION_TIME_MAX / NSEC_PER_SEC;
+	const uint32_t max_nsec = (uint32_t)(PRECISION_TIME_MAX % NSEC_PER_SEC);
 	precision_time_t ns;
 	uint64_t sec;
 	uint32_t nsec;
@@ -133,6 +135,9 @@ ZTEST(precision_timing, test_scalar_conversions_check_bounds)
 	zassert_ok(precision_time_to_u64_sec_nsec(ns, &sec, &nsec));
 	zassert_equal(sec, 12);
 	zassert_equal(nsec, 34);
+	zassert_ok(precision_time_from_u64_sec_nsec(max_sec, max_nsec, &ns));
+	zassert_equal(ns, PRECISION_TIME_MAX);
+	zassert_equal(precision_time_from_u64_sec_nsec(max_sec, max_nsec + 1, &ns), -ERANGE);
 	zassert_equal(precision_time_from_u64_sec_nsec(UINT64_MAX, 0, &ns), -ERANGE);
 	zassert_equal(precision_time_add(PRECISION_TIME_MAX, 1, &ns), -ERANGE);
 	zassert_equal(precision_time_sub(PRECISION_TIME_MIN, 1, &ns), -ERANGE);
