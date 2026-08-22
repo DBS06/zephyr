@@ -7,6 +7,15 @@ sample:
   description: Test PTP functionality
   name: PTP sample app
 tests:
+  sample.net.ptp.nxp_enet_qos.mcxa:
+    build_only: true
+    platform_allow:
+      - frdm_mcxa577/mcxa577
+    integration_platforms:
+      - frdm_mcxa577/mcxa577
+    extra_configs:
+      - CONFIG_PTP_CLOCK_NXP_ENET_QOS=y
+
   sample.net.ptp:
     depends_on:
       - eth
