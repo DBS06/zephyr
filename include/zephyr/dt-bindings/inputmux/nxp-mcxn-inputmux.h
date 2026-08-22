@@ -1,0 +1,13 @@
+/*
+ * SPDX-FileCopyrightText: Copyright 2026 NXP
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef ZEPHYR_INCLUDE_DT_BINDINGS_INPUTMUX_NXP_MCXN_INPUTMUX_H_
+#define ZEPHYR_INCLUDE_DT_BINDINGS_INPUTMUX_NXP_MCXN_INPUTMUX_H_
+
+/* Route ENET PPS output 0 to INPUTMUX external trigger output 0. */
+#define NXP_MCXN_INPUTMUX_ENET_PPS0_TO_EXT_TRIG0 0x4c00002f
+
+#endif /* ZEPHYR_INCLUDE_DT_BINDINGS_INPUTMUX_NXP_MCXN_INPUTMUX_H_ */
