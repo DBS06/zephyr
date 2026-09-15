@@ -129,6 +129,35 @@ next pulse on a dedicated workqueue after a monotonic falling-edge guard. It
 therefore accepts only a one-second period and reports a pulse-width range that
 reserves enough time to rearm safely.
 
+Autonomous PPS output
+*********************
+
+:kconfig:option:`CONFIG_PRECISION_PPS_OUTPUT` enables an instance-based service
+that maintains a fixed one-second waveform on a caller-selected precision clock
+and channel. It is an optional layer over direct scheduled-output operations and
+does not discover clocks or inspect synchronization protocol state.
+
+Each caller-owned :c:struct:`precision_pps_output` is initialized with a
+:c:struct:`precision_pps_output_config`. The configuration selects the channel,
+width policy, start guard, hard-step threshold, and polling interval. Start
+queries the channel limits, then polls the clock and output on a dedicated
+subsystem workqueue. The workqueue stack and priority are configured with
+:kconfig:option:`CONFIG_PRECISION_PPS_OUTPUT_WORKQUEUE_STACK_SIZE` and
+:kconfig:option:`CONFIG_PRECISION_PPS_OUTPUT_WORKQUEUE_PRIORITY`.
+
+The service can adopt a matching configured waveform. A detected clock step,
+missing or mismatched configuration, or reported inactive output causes a stop
+and rearm at a whole-second boundary. Transient read and status errors are
+reported and retried. The callback receives event flags and a coherent
+:c:struct:`precision_pps_output_state` snapshot; callers can obtain the same
+snapshot with :c:func:`precision_pps_output_state_get`.
+
+A started instance requires exclusive management of its clock/channel pair.
+:c:func:`precision_pps_output_stop` synchronously cancels polling and stops the
+provider. If provider stop fails, the instance remains started so its clock
+lifetime cannot be released accidentally. Calling stop from the instance's own
+callback returns ``-EDEADLK``.
+
 Shell control
 *************
 
@@ -159,7 +188,7 @@ When scheduled output is enabled, these commands operate on a channel:
 The absolute time arguments are nanoseconds in the registered clock's timescale.
 The PPS convenience command chooses a whole-second start with an additional
 scheduling guard and arms the waveform once. It does not run the autonomous
-PPS output service: there is no hard-step monitoring,
+:c:struct:`precision_pps_output` service: there is no hard-step monitoring,
 health polling, automatic rearming, or output-loss recovery. It does not check
 protocol synchronization state.
 
@@ -191,5 +220,7 @@ API reference
 .. doxygengroup:: precision_pi
 
 .. doxygengroup:: precision_clock_ptp
+
+.. doxygengroup:: precision_pps_output
 
 .. doxygengroup:: precision_timing_shell
