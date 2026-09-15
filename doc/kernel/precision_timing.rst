@@ -116,6 +116,19 @@ nanosecond values in the device clock's own timescale. A PTP clock driver can
 reference a provider, and :c:struct:`precision_clock_ptp_adapter` dispatches its
 callbacks without probing it during adapter initialization.
 
+The STM32 Ethernet provider exposes FlexPPS channel zero when
+:kconfig:option:`CONFIG_PTP_CLOCK_STM32_HAL_OUTPUT` is enabled and supported by
+the MAC. Its resolution is derived from
+:kconfig:option:`CONFIG_ETH_STM32_HAL_PTP_CLOCK_SRC_HZ`, and the first edge must
+meet the hardware alignment, lead-time, and 32-bit seconds-register limits.
+
+STM32H562/H563/H573 erratum ES0565 section 2.22.9 documents incorrect FlexPPS
+pulse-train intervals in fine timestamp mode. On those devices the provider
+keeps fine clock correction and emits absolute single pulses, rearming each
+next pulse on a dedicated workqueue after a monotonic falling-edge guard. It
+therefore accepts only a one-second period and reports a pulse-width range that
+reserves enough time to rearm safely.
+
 Protocol integration
 ********************
 
