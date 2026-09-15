@@ -32,7 +32,8 @@ waveform with a fixed one-second period. The high-pulse width follows one of two
 provider's native default width, or an exact width supplied by the caller. This
 sample uses the subsystem Kconfig defaults via
 ``PRECISION_PPS_OUTPUT_CONFIG_DEFAULTS``. The default is an exact 200-millisecond
-active-high pulse. Unsupported exact requests fail without changing policy.
+active-high pulse. The MCXN947 board configuration selects provider-default
+width explicitly. Unsupported exact requests fail without changing policy.
 
 The service is instance-based. The sample owns a single
 :c:struct:`precision_pps_output` object and a matching
@@ -69,11 +70,18 @@ requires external measurement.
 Requirements
 ************
 
-The sample supports :zephyr:board:`nucleo_h563zi`. It routes the Ethernet MAC
-FlexPPS output to ``PG8`` on ST Morpho connector pin 66. Connect the measurement
-instrument and board with a common ground. The PTP time-transmitter and all
-PTP-aware network devices must use Layer-2 transport and the P2P delay
-mechanism.
+The sample supports :zephyr:board:`nucleo_h563zi` and
+:zephyr:board:`frdm_mcxn947`. On the Nucleo board it routes the Ethernet MAC
+FlexPPS output to ``PG8`` on ST Morpho connector pin 66. On FRDM-MCXN947 it
+routes ENET PPS0 through INPUTMUX ``EXT_TRIG0`` to ``P3_20``, available on
+header J6 pin 6 and header J1 pin 5. Connect the measurement instrument and
+board with a common ground. The PTP time-transmitter and all PTP-aware network
+devices must use Layer-2 transport and the P2P delay mechanism.
+
+The FRDM-MCXN947 route is opt-in because ``P3_20`` is also used by SAI1 TXD0
+and the mikroBUS SPI MOSI signal. Its sample overlay disables SAI1 and
+Flexcomm6 LPSPI6. Do not enable either conflicting peripheral while PPS output
+is selected.
 
 .. note::
 
@@ -82,6 +90,12 @@ mechanism.
    accepts only a one-second period. That matches the PPS service. This
    single-pulse rearming approach has been validated on hardware, although it
    differs from ST's documented coarse-correction workaround.
+
+.. note::
+
+   MCXN947 has no programmable PPS interval or width registers. Its legacy
+   fixed 1 Hz output is a single PTP system-time clock pulse, nominally 20 ns
+   with the driver's 50 MHz PTP timebase.
 
 PTP Time-Transmitter Configuration
 **********************************
@@ -113,6 +127,9 @@ Build and flash the sample as follows:
    :board: nucleo_h563zi/stm32h563xx
    :goals: build flash
    :compact:
+
+For FRDM-MCXN947, select ``frdm_mcxn947/mcxn947/cpu0`` instead. The
+board-specific overlay enables the otherwise unavailable PPS pin route.
 
 After startup, the sample logs the service-armed configuration and periodic
 service-state snapshots, and reports clock steps, inactive output, rearms, and
