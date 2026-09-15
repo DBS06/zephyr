@@ -5325,11 +5325,13 @@ Precision Timing:
     - samples/subsys/precision_timing/
     - subsys/precision_timing/
     - tests/subsys/precision_timing/
+    - samples/net/pps_out/
     - doc/kernel/precision_timing.rst
   labels:
     - "area: Precision Timing"
   tests:
     - sample.subsys.precision_timing
+    - sample.net.pps_out
     - subsys.precision_timing
 
 QNX Hypervisor Platforms:
