@@ -107,6 +107,15 @@ must stop and rearm output when its policy requires that. Scheduled output does
 not imply PTP lock, UTC correctness, grandmaster health, or PPS accuracy. PPS
 input and external timestamp capture are outside this API.
 
+Driver providers
+================
+
+The driver-facing :c:struct:`precision_clock_output_provider` contract is in
+:zephyr_file:`include/zephyr/drivers/precision_clock_output.h`. It uses raw
+nanosecond values in the device clock's own timescale. A PTP clock driver can
+reference a provider, and :c:struct:`precision_clock_ptp_adapter` dispatches its
+callbacks without probing it during adapter initialization.
+
 Protocol integration
 ********************
 
@@ -130,6 +139,8 @@ API reference
 
 .. doxygengroup:: precision_clock
 
-.. doxygengroup:: precision_clock_ptp
+.. doxygengroup:: precision_clock_output_provider
 
 .. doxygengroup:: precision_pi
+
+.. doxygengroup:: precision_clock_ptp
