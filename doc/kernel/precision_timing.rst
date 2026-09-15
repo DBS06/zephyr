@@ -129,6 +129,11 @@ next pulse on a dedicated workqueue after a monotonic falling-edge guard. It
 therefore accepts only a one-second period and reports a pulse-width range that
 reserves enough time to rearm safely.
 
+The MCXN947 ENET QoS provider exposes one fixed 1 Hz output when
+:kconfig:option:`CONFIG_PTP_CLOCK_NXP_ENET_QOS_OUTPUT` is enabled. The hardware
+uses its provider-default pulse width of one 50 MHz clock period. The selected
+pin route is opt-in because the pad can be shared with other peripherals.
+
 Autonomous PPS output
 *********************
 
