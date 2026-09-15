@@ -129,6 +129,40 @@ next pulse on a dedicated workqueue after a monotonic falling-edge guard. It
 therefore accepts only a one-second period and reports a pulse-width range that
 reserves enough time to rearm safely.
 
+Shell control
+*************
+
+:kconfig:option:`CONFIG_PRECISION_TIMING_SHELL` enables a fixed-size runtime
+registry and the ``precision_clock`` command. Register clocks with
+:c:func:`precision_timing_shell_register` and unregister them synchronously with
+:c:func:`precision_timing_shell_unregister`. Registry capacity is selected by
+:kconfig:option:`CONFIG_PRECISION_TIMING_SHELL_MAX_INSTANCES`.
+
+The shell can list and read registered clocks:
+
+.. code-block:: console
+
+   precision_clock list
+   precision_clock get <name>
+
+When scheduled output is enabled, these commands operate on a channel:
+
+.. code-block:: console
+
+   precision_clock output caps <name> <channel>
+   precision_clock output get <name> <channel>
+   precision_clock output waveform <name> <channel> <first_rising_ns> <period_ns> [pulse_width_ns]
+   precision_clock output stop <name> <channel>
+   precision_clock pps start <name> <channel> [pulse_width_ns]
+   precision_clock pps stop <name> <channel>
+
+The absolute time arguments are nanoseconds in the registered clock's timescale.
+The PPS convenience command chooses a whole-second start with an additional
+scheduling guard and arms the waveform once. It does not run the autonomous
+PPS output service: there is no hard-step monitoring,
+health polling, automatic rearming, or output-loss recovery. It does not check
+protocol synchronization state.
+
 Protocol integration
 ********************
 
@@ -157,3 +191,5 @@ API reference
 .. doxygengroup:: precision_pi
 
 .. doxygengroup:: precision_clock_ptp
+
+.. doxygengroup:: precision_timing_shell
