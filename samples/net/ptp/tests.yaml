@@ -23,6 +23,16 @@ tests:
     integration_platforms:
       - nucleo_h563zi
 
+  sample.net.ptp.pps_output:
+    build_only: true
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-pps-output.conf
+      - EXTRA_DTC_OVERLAY_FILE=boards/nucleo_h563zi_pps_output.overlay
+    platform_allow:
+      - nucleo_h563zi/stm32h563xx
+    integration_platforms:
+      - nucleo_h563zi/stm32h563xx
+
   sample.net.ptp.dwmac:
     extra_configs:
       - CONFIG_ETH_STM32_HAL=n

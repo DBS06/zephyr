@@ -393,3 +393,36 @@ Use commands such as ``ptp_clock get <device>`` to read the PHC time,
 change it, ``ptp_clock freq <device> <ppb>`` to apply a frequency adjustment,
 and ``ptp_clock selftest <device> <time> <freq> <delay> <adj>`` for a quick
 driver-level sanity check.
+
+Scheduled output (Nucleo H563ZI)
+================================
+
+An opt-in build configuration exposes the precision-timing shell and the STM32
+Ethernet FlexPPS output provider. This lets you manually drive a scheduled
+waveform on PG8 without the autonomous PPS output service.
+
+Build with the paired extra files:
+
+.. zephyr-app-commands::
+   :zephyr-app: samples/net/ptp
+   :board: nucleo_h563zi/stm32h563xx
+   :gen-args: -DEXTRA_CONF_FILE=overlay-pps-output.conf -DEXTRA_DTC_OVERLAY_FILE=boards/nucleo_h563zi_pps_output.overlay
+   :goals: build
+   :compact:
+
+The overlay routes PPS0 to PG8; the default PTP sample build does not add this
+pinctrl. Connect a Layer-2/P2P time source, a reference PPS probe, and common
+ground. After boot, the precision-timing shell is available:
+
+.. code-block:: console
+
+   uart:~$ precision_clock list
+   uart:~$ precision_clock output caps phc 0
+   uart:~$ precision_clock pps start phc 0 200000000
+   uart:~$ precision_clock output get phc 0
+   uart:~$ precision_clock pps stop phc 0
+
+The ``pps start`` command arms a one-second waveform with the given pulse
+width in nanoseconds. It does not run the autonomous PPS output service; there
+is no hard-step monitoring or automatic rearming. Use ``pps stop`` to clear the
+configuration and stop the output.

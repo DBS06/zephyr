@@ -8,6 +8,12 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(net_ptp_sample, LOG_LEVEL_DBG);
 
+#include <zephyr/device.h>
+#include <zephyr/net/ethernet.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/precision_timing/precision_clock_ptp.h>
+#include <zephyr/precision_timing/precision_timing_shell.h>
+
 #include <zephyr/kernel.h>
 
 #include <errno.h>
@@ -99,8 +105,46 @@ void init_testing(void)
 	exit(ret);
 }
 
+#ifdef CONFIG_PRECISION_TIMING_SHELL
+#define PHC_WAIT_ATTEMPTS 100U
+#define PHC_WAIT_INTERVAL K_MSEC(100)
+
+static struct precision_clock_ptp_adapter phc_adapter;
+
+static int register_precision_clock(void)
+{
+	const struct device *ptp_clock;
+
+	for (uint32_t attempt = 0U; attempt < PHC_WAIT_ATTEMPTS; attempt++) {
+		struct net_if *iface = net_if_get_default();
+
+		if (iface != NULL) {
+			ptp_clock = net_eth_get_ptp_clock(iface);
+			if (ptp_clock != NULL && device_is_ready(ptp_clock)) {
+				precision_clock_ptp_init(&phc_adapter, ptp_clock);
+				return precision_timing_shell_register(
+					"phc", precision_clock_ptp_get(&phc_adapter));
+			}
+		}
+
+		k_sleep(PHC_WAIT_INTERVAL);
+	}
+
+	return -ENODEV;
+}
+#endif
+
 int main(void)
 {
+#ifdef CONFIG_PRECISION_TIMING_SHELL
+	int ret = register_precision_clock();
+
+	if (ret < 0) {
+		LOG_ERR("Failed to register precision clock: %d", ret);
+		return ret;
+	}
+#endif
+
 	init_testing();
 	return 0;
 }
