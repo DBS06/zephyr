@@ -39,4 +39,12 @@ config PRECISION_TIMING_PI_KI
 	  Shorter Sync intervals may require a smaller gain to avoid
 	  oscillation.
 
+config PRECISION_CLOCK_OUTPUT
+	bool "Scheduled precision clock output"
+	help
+	  Enable protocol-neutral scheduled clock outputs. Providers can expose
+	  hardware-timed output channels that drive periodic waveforms with explicit
+	  first-edge times, periods,
+	  and pulse-width policies in the owning precision clock's timescale.
+
 endif # PRECISION_TIMING

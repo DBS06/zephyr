@@ -47,7 +47,7 @@ implementation.
 
 :c:struct:`precision_clock_ptp_adapter` exposes an existing Zephyr PTP clock
 device through this interface. It performs the required conversion between
-:c:struct:`net_ptp_time` and :c:type:`precision_time_t`; it does not add
+:c:struct:`net_ptp_time` and :c:type:`precision_time_t`; it does not add generic
 capability discovery or synchronization state.
 
 PI controller
@@ -73,13 +73,47 @@ The PTP and gPTP integrations initialize their controllers from
 gains in thousandths. Direct users of :c:func:`precision_pi_init` may provide
 different gains for each controller instance.
 
+Scheduled clock output
+**********************
+
+:kconfig:option:`CONFIG_PRECISION_CLOCK_OUTPUT` adds optional scheduled-output
+operations to :c:struct:`precision_clock`. Output capabilities are reported per
+channel with :c:func:`precision_clock_output_get_caps`; there is no generic
+capability query for the clock itself. Each missing output callback returns
+``-ENOTSUP`` independently.
+
+A channel supports periodic waveforms.
+:c:func:`precision_clock_output_start_waveform`
+accepts an absolute first rising edge, a period, and either a provider-default
+or exact high-pulse width. All absolute times are :c:type:`precision_time_t`
+values interpreted in the owning clock's timescale. Periods and widths are
+nanoseconds and must meet the limits and resolution reported for the channel.
+
+:c:func:`precision_clock_output_next_start_time` finds the next period-aligned
+start that satisfies a requested lead time using checked arithmetic. Use
+:c:func:`precision_clock_output_get_status` to inspect an accepted
+configuration, and :c:func:`precision_clock_output_stop` to disable a channel.
+``configured`` describes provider ownership; ``hardware_active`` is meaningful
+only when ``hardware_active_valid`` is set. It reports whether the hardware
+output generator is armed or running for the accepted configuration, including
+before a future first edge and during the low portion of a waveform. It does
+not report the instantaneous pin level or whether an edge is occurring. When
+hardware state is unobservable, the accepted configuration remains the source
+of truth.
+
+The generated waveform follows its underlying clock. A hard clock set or phase
+step can cross an edge or make the waveform discontinuous, so the clock owner
+must stop and rearm output when its policy requires that. Scheduled output does
+not imply PTP lock, UTC correctness, grandmaster health, or PPS accuracy. PPS
+input and external timestamp capture are outside this API.
+
 Protocol integration
 ********************
 
-PTP and the gPTP default clock-update path each keep their existing policy and
-use a :c:struct:`precision_pi` for the shared calculation. They initialize a
+PTP and the gPTP default clock-update path keep their existing policy and use a
+:c:struct:`precision_pi` for the shared calculation. They initialize a
 PTP-clock adapter once and use :c:struct:`precision_clock` operations to access
-the PHC.
+the PHC. Scheduled output remains independent of those protocol state machines.
 
 Sample
 ******
