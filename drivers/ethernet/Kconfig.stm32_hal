@@ -159,6 +159,17 @@ menuconfig PTP_CLOCK_STM32_HAL
 
 if PTP_CLOCK_STM32_HAL
 
+config ETH_STM32_HAL_PTP_OFFLOAD
+	bool "STM32H563 PTP packet offload"
+	default y if PTP_PACKET_ONE_STEP || PTP_PACKET_AUTO
+	depends on SOC_STM32H563XX && ETH_STM32_HAL_API_V2
+	select NET_ETHERNET_PTP_OFFLOAD
+	help
+	  Support one-step Sync and peer response correction, and automatic Sync
+	  and delay responses for untagged IEEE 1588v2 Ethernet packets. The PTP
+	  stack selects operations using runtime capability discovery. This uses
+	  a Zephyr-owned TX descriptor ring; the HAL still handles MAC setup and RX.
+
 config ETH_STM32_HAL_PTP_CLOCK_SRC_HZ
 	int "Frequency of the clock source for the PTP timer"
 	default 50000000

@@ -197,10 +197,24 @@ static void phy_link_state_changed(const struct device *phy_dev, struct phy_link
 	 * The speed can change without receiving a link down callback before.
 	 */
 	if (state->is_up) {
-		eth_stm32_hal_stop(dev, dev_data->iface);
+		int ret = eth_stm32_hal_stop(dev, dev_data->iface);
+
+		if (ret != 0) {
+			net_eth_carrier_set(dev_data->iface, false);
+			return;
+		}
 		eth_stm32_set_mac_config(dev, state);
-		eth_stm32_hal_start(dev, dev_data->iface);
+		ret = eth_stm32_hal_start(dev, dev_data->iface);
+		if (ret != 0) {
+			net_eth_carrier_set(dev_data->iface, false);
+			return;
+		}
 	}
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	else {
+		eth_stm32_hal_stop(dev, dev_data->iface);
+	}
+#endif
 
 	net_eth_carrier_set(dev_data->iface, state->is_up);
 }
@@ -293,6 +307,9 @@ static const struct ethernet_api eth_api = {
 #endif /* CONFIG_PTP_CLOCK_STM32_HAL */
 	.get_capabilities = eth_stm32_hal_get_capabilities,
 	.set_config = eth_stm32_hal_set_config,
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	.get_config = eth_stm32_ptp_offload_get,
+#endif
 	.get_phy = eth_stm32_hal_get_phy,
 	.send = eth_stm32_tx,
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)

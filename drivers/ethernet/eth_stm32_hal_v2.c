@@ -150,7 +150,12 @@ static inline uint16_t allocate_tx_buffer(struct eth_stm32_hal_dev_data *dev_dat
 	}
 }
 
-#if defined(CONFIG_ETH_STM32_HAL_TX_ASYNC)
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+int eth_stm32_tx(const struct device *dev, struct net_pkt *pkt)
+{
+	return eth_stm32_ptp_offload_tx(dev, pkt);
+}
+#elif defined(CONFIG_ETH_STM32_HAL_TX_ASYNC)
 /* allocate a tx context and mark it as used, the first tx buffer is also allocated */
 static struct eth_stm32_tx_context *
 allocate_tx_context_async(struct eth_stm32_hal_dev_data *dev_data, struct net_pkt *pkt)
@@ -432,7 +437,7 @@ error:
 }
 #endif /* ETH_STM32_HAL_TX_ASYNC */
 
-struct net_pkt *eth_stm32_rx(const struct device *dev)
+struct net_pkt *eth_stm32_rx_locked(const struct device *dev)
 {
 	const struct eth_stm32_hal_dev_cfg *cfg = dev->config;
 	struct eth_stm32_hal_dev_data *dev_data = dev->data;
@@ -482,8 +487,9 @@ struct net_pkt *eth_stm32_rx(const struct device *dev)
 	}
 #endif /* CONFIG_PTP_CLOCK_STM32_HAL */
 
-	pkt = net_pkt_rx_alloc_with_buffer(dev_data->iface,
-					   total_len, NET_AF_UNSPEC, 0, K_MSEC(100));
+	pkt = net_pkt_rx_alloc_with_buffer(
+		dev_data->iface, total_len, NET_AF_UNSPEC, 0,
+		IS_ENABLED(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD) ? K_NO_WAIT : K_MSEC(100));
 	if (!pkt) {
 		LOG_ERR("Failed to obtain RX buffer");
 		goto release_desc;
@@ -521,10 +527,43 @@ release_desc:
 #endif /* CONFIG_PTP_CLOCK_STM32_HAL */
 
 out:
+
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	if (pkt != NULL) {
+		eth_stm32_ptp_offload_rx(dev, pkt);
+	}
+#endif
 	if (!pkt) {
 		eth_stats_update_errors_rx(dev_data->iface);
 	}
 
+	return pkt;
+}
+
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+bool eth_stm32_rx_pending(const struct device *dev)
+{
+	struct eth_stm32_hal_dev_data *data = dev->data;
+	ETH_RxDescListTypeDef *rx = &data->heth.RxDescList;
+	ETH_DMADescTypeDef *desc = (ETH_DMADescTypeDef *)rx->RxDesc[rx->RxDescIdx];
+
+	return data->heth.gState == HAL_ETH_STATE_STARTED &&
+	       (rx->pRxStart != NULL || (desc->DESC3 & ETH_DMARXNDESCWBF_OWN) == 0U);
+}
+#endif
+
+struct net_pkt *eth_stm32_rx(const struct device *dev)
+{
+	struct net_pkt *pkt;
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	struct eth_stm32_hal_dev_data *data = dev->data;
+
+	k_mutex_lock(&data->ptp_lock, K_FOREVER);
+#endif
+	pkt = eth_stm32_rx_locked(dev);
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	k_mutex_unlock(&data->ptp_lock);
+#endif
 	return pkt;
 }
 
@@ -540,6 +579,9 @@ void HAL_ETH_TxCpltCallback(ETH_HandleTypeDef *heth_handle)
 
 	k_sem_give(&dev_data->tx_int_sem);
 
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	k_work_reschedule(&dev_data->ptp_tx_work, K_NO_WAIT);
+#endif
 }
 
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)
@@ -583,6 +625,14 @@ static void eth_stm32_update_rx_error_details(ETH_HandleTypeDef *heth,
 
 void HAL_ETH_ErrorCallback(ETH_HandleTypeDef *heth)
 {
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	if ((HAL_ETH_GetDMAError(heth) & ETH_DMACSR_FBE) != 0U) {
+		struct eth_stm32_hal_dev_data *data =
+			CONTAINER_OF(heth, struct eth_stm32_hal_dev_data, heth);
+
+		eth_stm32_ptp_offload_fault(data);
+	}
+#endif
 	/* Do not log errors. If errors are reported due to high traffic,
 	 * logging errors will only increase traffic issues
 	 */
@@ -692,6 +742,10 @@ int eth_stm32_hal_init(const struct device *dev)
 	k_sem_init(&dev_data->rx_int_sem, 0, K_SEM_MAX_LIMIT);
 	k_sem_init(&dev_data->tx_int_sem, 0, 1);
 
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	eth_stm32_ptp_offload_init(dev);
+#endif
+
 	for (uint16_t i = 0; i < ETH_TXBUFNB; ++i) {
 		dev_data->tx_buffer_header[i].tx_buff.buffer = cfg->dma_buf->tx_buf[i];
 	}
@@ -769,10 +823,24 @@ int eth_stm32_hal_start(const struct device *dev, struct net_if *iface __unused)
 
 	LOG_DBG("Starting ETH HAL driver");
 
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	k_mutex_lock(&dev_data->ptp_lock, K_FOREVER);
+	if (dev_data->ptp_tx_used != 0U) {
+		k_mutex_unlock(&dev_data->ptp_lock);
+		return -EIO;
+	}
+#endif
 	hal_ret = HAL_ETH_Start_IT(heth);
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	dev_data->ptp_stopping = hal_ret != HAL_OK;
+	k_mutex_unlock(&dev_data->ptp_lock);
+#endif
 
 	if (hal_ret != HAL_OK) {
 		LOG_ERR("HAL_ETH_Start{_IT} failed");
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+		return -EIO;
+#endif
 	}
 
 	return 0;
@@ -786,7 +854,25 @@ int eth_stm32_hal_stop(const struct device *dev, struct net_if *iface __unused)
 
 	LOG_DBG("Stopping ETH HAL driver");
 
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	struct ethernet_ptp_config disabled = {0};
+
+	k_mutex_lock(&dev_data->ptp_lock, K_FOREVER);
+	dev_data->ptp_stopping = true;
+	if (eth_stm32_ptp_offload_configure(dev, &disabled) != 0) {
+		eth_stm32_ptp_offload_fault(dev_data);
+	}
+#endif
+
 	hal_ret = HAL_ETH_Stop_IT(heth);
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	int ret = eth_stm32_ptp_offload_stop(dev);
+
+	k_mutex_unlock(&dev_data->ptp_lock);
+	if (ret != 0) {
+		return ret;
+	}
+#endif
 
 	if (hal_ret != HAL_OK) {
 		/* HAL_ETH_Stop{_IT} returns HAL_ERROR only if ETH is already stopped */
@@ -805,6 +891,10 @@ int eth_stm32_hal_set_config(const struct device *dev,
 	ETH_HandleTypeDef *heth = &dev_data->heth;
 
 	switch (type) {
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	case ETHERNET_CONFIG_TYPE_PTP:
+		return eth_stm32_ptp_offload_configure(dev, &config->ptp);
+#endif
 	case ETHERNET_CONFIG_TYPE_MAC_ADDRESS:
 		memcpy(dev_data->mac_addr, config->mac_address.addr,
 		       sizeof(dev_data->mac_addr));
