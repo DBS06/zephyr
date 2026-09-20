@@ -21,6 +21,25 @@ menuconfig PTP
 
 if PTP
 
+choice PTP_PACKET_MODE
+	prompt "PTP packet processing"
+	default PTP_PACKET_TWO_STEP
+
+config PTP_PACKET_TWO_STEP
+	bool "Two-step"
+
+config PTP_PACKET_ONE_STEP
+	bool "Hardware one-step insertion with software fallback"
+	depends on PTP_IEEE_802_3_PROTOCOL && PTP_ORDINARY_CLOCK
+	select NET_ETHERNET_PTP_OFFLOAD
+
+config PTP_PACKET_AUTO
+	bool "Automatic hardware messages with software fallback"
+	depends on PTP_IEEE_802_3_PROTOCOL && PTP_ORDINARY_CLOCK
+	select NET_ETHERNET_PTP_OFFLOAD
+
+endchoice
+
 config ZVFS_EVENTFD_ADD_SIZE_PTP
 	int "Number of eventfds needed by the PTP stack"
 	default 1

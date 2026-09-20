@@ -23,6 +23,10 @@ struct fake_recv_action {
 	size_t timestamp_len;
 	const struct net_ptp_time *timestamp;
 	bool with_timestamp;
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	bool with_offload;
+	bool truncated;
+#endif
 };
 
 static int64_t fake_now_ms;
@@ -47,6 +51,46 @@ static const struct net_ptp_time fake_invalid_rx_timestamp = {
 	.second = UINT64_MAX,
 	.nanosecond = UINT32_MAX,
 };
+
+static int offload_option_calls;
+static int offload_option_result;
+static int close_calls;
+
+static int fake_zsock_socket(int family, int type, int proto)
+{
+	zassert_equal(family, NET_AF_PACKET);
+	zassert_equal(type, NET_SOCK_DGRAM);
+	zassert_equal(proto, net_htons(NET_ETH_PTYPE_PTP));
+	return 10;
+}
+
+static int fake_zsock_bind(int sock, const struct net_sockaddr *addr, net_socklen_t len)
+{
+	ARG_UNUSED(sock);
+	ARG_UNUSED(addr);
+	ARG_UNUSED(len);
+	return 0;
+}
+
+static int fake_zsock_setsockopt(int sock, int level, int option, const void *value,
+				 net_socklen_t len)
+{
+	ARG_UNUSED(sock);
+	if (level == ZSOCK_SOL_SOCKET && option == ZSOCK_SO_PTP_OFFLOAD) {
+		zassert_equal(len, sizeof(int));
+		zassert_equal(*(const int *)value, 1);
+		offload_option_calls++;
+		return offload_option_result;
+	}
+	return 0;
+}
+
+static int fake_zsock_close(int sock)
+{
+	ARG_UNUSED(sock);
+	close_calls++;
+	return 0;
+}
 
 static int64_t fake_k_uptime_get(void)
 {
@@ -110,6 +154,24 @@ static ssize_t fake_zsock_recvmsg(int sock, struct net_msghdr *msg, int flags)
 	memcpy(NET_CMSG_DATA(cmsg),
 	       action.timestamp != NULL ? action.timestamp : &fake_rx_timestamp, timestamp_len);
 
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	if (action.with_offload) {
+		struct net_ptp_packet meta = {
+			.flags = NET_PTP_PACKET_RX_VALID | NET_PTP_PACKET_RX_RESPONDED,
+			.generation = 19,
+		};
+
+		cmsg = (struct net_cmsghdr *)((uint8_t *)cmsg + NET_CMSG_SPACE(timestamp_len));
+		cmsg->cmsg_level = ZSOCK_SOL_SOCKET;
+		cmsg->cmsg_type = ZSOCK_SCM_PTP_OFFLOAD;
+		cmsg->cmsg_len = NET_CMSG_LEN(sizeof(meta));
+		memcpy(NET_CMSG_DATA(cmsg), &meta, sizeof(meta));
+		msg->msg_controllen += NET_CMSG_SPACE(sizeof(meta));
+	}
+	if (action.truncated) {
+		msg->msg_flags |= ZSOCK_MSG_CTRUNC;
+	}
+#endif
 	return action.ret;
 }
 
@@ -152,6 +214,10 @@ static ssize_t fake_zsock_sendto(int sock, const void *buf, size_t len, int flag
 }
 
 #define k_uptime_get        fake_k_uptime_get
+#define zsock_socket        fake_zsock_socket
+#define zsock_bind          fake_zsock_bind
+#define zsock_setsockopt    fake_zsock_setsockopt
+#define zsock_close         fake_zsock_close
 #define net_if_get_by_iface fake_net_if_get_by_iface
 #define zsock_sendto        fake_zsock_sendto
 #define zsock_recvmsg       fake_zsock_recvmsg
@@ -162,6 +228,10 @@ static ssize_t fake_zsock_sendto(int sock, const void *buf, size_t len, int flag
 #undef zsock_sendto
 #undef net_if_get_by_iface
 #undef k_uptime_get
+#undef zsock_socket
+#undef zsock_bind
+#undef zsock_setsockopt
+#undef zsock_close
 
 static void reset_fakes(void)
 {
@@ -179,6 +249,9 @@ static void reset_fakes(void)
 	memset(&last_send_addr, 0, sizeof(last_send_addr));
 	memset(recvmsg_script, 0, sizeof(recvmsg_script));
 	memset(recvfrom_script, 0, sizeof(recvfrom_script));
+	offload_option_calls = 0;
+	offload_option_result = 0;
+	close_calls = 0;
 }
 
 static void init_send_msg(struct ptp_msg *msg, enum ptp_msg_type type)
@@ -201,6 +274,64 @@ static void transport_retry_before(void *fixture)
 
 	reset_fakes();
 }
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+ZTEST(ptp_transport_retry, test_l2_open_requires_ownership_socket_option)
+{
+	zassert_equal(transport_l2_open(NULL), 10);
+	zassert_equal(offload_option_calls, 1);
+	offload_option_result = -1;
+	zassert_equal(transport_l2_open(NULL), -1);
+	zassert_equal(close_calls, 1);
+}
+
+ZTEST(ptp_transport_retry, test_udp_membership_does_not_request_packet_metadata)
+{
+	struct ptp_port port = {0};
+	struct net_in_addr addr = {0};
+
+	zassert_ok(transport_join_ipv4_group(&port, 10, &addr, "test"));
+	zassert_equal(offload_option_calls, 0);
+}
+
+ZTEST(ptp_transport_retry, test_ownership_survives_invalid_timestamp)
+{
+	struct ptp_port port = {.l2_try_recvmsg = true};
+	struct ptp_msg msg = {0};
+
+	recvmsg_script[0] = (struct fake_recv_action){
+		.ret = 44,
+		.with_timestamp = true,
+		.timestamp = &fake_invalid_rx_timestamp,
+		.with_offload = true,
+	};
+	recvmsg_script_len = 1;
+	zassert_equal(ptp_transport_recv(&port, &msg, PTP_SOCKET_EVENT), 44);
+	zassert_false(msg.rx_timestamp_valid);
+	zassert_equal(msg.offload.flags, NET_PTP_PACKET_RX_VALID | NET_PTP_PACKET_RX_RESPONDED);
+	zassert_equal(msg.offload.generation, 19);
+}
+
+ZTEST(ptp_transport_retry, test_timestamp_and_ownership_coexist_and_truncation_is_unknown)
+{
+	struct ptp_port port = {.l2_try_recvmsg = true};
+	struct ptp_msg msg = {0};
+
+	recvmsg_script[0] = (struct fake_recv_action){
+		.ret = 44,
+		.with_timestamp = true,
+		.with_offload = true,
+	};
+	recvmsg_script[1] = recvmsg_script[0];
+	recvmsg_script[1].truncated = true;
+	recvmsg_script_len = 2;
+	zassert_equal(ptp_transport_recv(&port, &msg, PTP_SOCKET_EVENT), 44);
+	zassert_true(msg.rx_timestamp_valid);
+	zassert_equal(msg.offload.flags, NET_PTP_PACKET_RX_VALID | NET_PTP_PACKET_RX_RESPONDED);
+	zassert_equal(ptp_transport_recv(&port, &msg, PTP_SOCKET_EVENT), 44);
+	zassert_equal(msg.offload.flags, 0);
+}
+#endif
 
 ZTEST(ptp_transport_retry, test_recvmsg_failure_temporarily_falls_back_then_retries)
 {
