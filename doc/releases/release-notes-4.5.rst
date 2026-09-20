@@ -898,6 +898,13 @@ New APIs and options
     receive queue, so that a sender which supports SACK can resend only the
     missing data. Incoming SACK blocks are not yet used when retransmitting.
   * :kconfig:option:`CONFIG_PTP_NETWORK_MODE_HYBRID`
+  * Added optional Ethernet PTP packet configuration and packet-socket ancillary
+    metadata for one-step insertion and automatic message generation. The
+    STM32H563 HAL-v2 driver supports these operations for ordinary clocks over
+    Ethernet. Two-step operation remains the default; runtime capabilities and
+    hardware template limits determine fallback. See :ref:`ptp_interface`.
+  * PTP peer-delay measurement now accepts one-step responses and retains
+    fractional correction-field precision.
   * Add experimental iperf3 support to zperf
     (:kconfig:option:`CONFIG_NET_ZPERF_IPERF3`), chosen in place of iPerf 2
     (:kconfig:option:`CONFIG_NET_ZPERF_IPERF2`). The zperf API and shell commands are the
