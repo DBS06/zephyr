@@ -97,4 +97,12 @@ config NET_L2_PTP_TIMESTAMPING
 	help
 	  Enable PTP timestamping support on L2.
 
+config NET_ETHERNET_PTP_OFFLOAD
+	bool "Ethernet PTP packet offload metadata"
+	depends on NET_L2_ETHERNET && PTP_CLOCK
+	help
+	  Carry one-step transmission instructions and automatic response ownership
+	  through packet sockets and network packets. Drivers advertise supported
+	  operations through their Ethernet configuration API.
+
 endmenu
