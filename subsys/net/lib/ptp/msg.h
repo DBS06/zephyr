@@ -299,6 +299,10 @@ struct ptp_msg {
 	int64_t local_uptime_ms;
 	/** True if transport layer provided RX hardware timestamp for this message. */
 	bool rx_timestamp_valid;
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	/** TX instructions or RX ownership metadata, never part of the wire message. */
+	struct net_ptp_packet offload;
+#endif
 	/** List object. */
 	sys_snode_t node;
 	/** Single-linked list of TLVs attached to the message. */
