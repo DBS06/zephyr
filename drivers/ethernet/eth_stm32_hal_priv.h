@@ -146,6 +146,19 @@ struct eth_stm32_hal_dev_data {
 	uint8_t mac_addr[NET_ETH_ADDR_LEN];
 	ETH_HandleTypeDef heth;
 	struct k_sem rx_int_sem;
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+	struct k_mutex ptp_lock;
+	struct k_work_delayable ptp_tx_work;
+	struct ethernet_ptp_config ptp_config;
+	struct net_pkt *ptp_tx_pkt[ETH_TX_DESC_CNT];
+	uint16_t ptp_tx_head;
+	uint16_t ptp_tx_tail;
+	uint16_t ptp_tx_used;
+	atomic_t ptp_fault;
+	bool ptp_stopping;
+	int64_t ptp_tx_started[ETH_TX_DESC_CNT];
+	bool ptp_tx_abandoned[ETH_TX_DESC_CNT];
+#endif
 #if defined(CONFIG_ETH_STM32_HAL_API_V2)
 	struct k_sem tx_int_sem;
 	struct eth_stm32_rx_buffer_header rx_buffer_header[ETH_RXBUFNB];
@@ -171,6 +184,7 @@ void eth_stm32_setup_mac_filter(ETH_HandleTypeDef *heth);
 void eth_stm32_set_mac_config(const struct device *dev, struct phy_link_state *state);
 int eth_stm32_tx(const struct device *dev, struct net_pkt *pkt);
 struct net_pkt *eth_stm32_rx(const struct device *dev);
+struct net_pkt *eth_stm32_rx_locked(const struct device *dev);
 int eth_stm32_hal_init(const struct device *dev);
 int eth_stm32_hal_start(const struct device *dev, struct net_if *iface);
 int eth_stm32_hal_stop(const struct device *dev, struct net_if *iface);
@@ -179,6 +193,19 @@ int eth_stm32_hal_set_config(const struct device *dev,
 			     enum ethernet_config_type type,
 			     const struct ethernet_config *config);
 struct net_if *eth_stm32_get_iface(struct eth_stm32_hal_dev_data *ctx);
+
+#if defined(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD)
+bool eth_stm32_rx_pending(const struct device *dev);
+void eth_stm32_ptp_offload_init(const struct device *dev);
+int eth_stm32_ptp_offload_stop(const struct device *dev);
+int eth_stm32_ptp_offload_tx(const struct device *dev, struct net_pkt *pkt);
+void eth_stm32_ptp_offload_rx(const struct device *dev, struct net_pkt *pkt);
+void eth_stm32_ptp_offload_fault(struct eth_stm32_hal_dev_data *data);
+int eth_stm32_ptp_offload_configure(const struct device *dev,
+				    const struct ethernet_ptp_config *config);
+int eth_stm32_ptp_offload_get(const struct device *dev, struct net_if *iface,
+			      enum ethernet_config_type type, struct ethernet_config *config);
+#endif
 
 #if defined(CONFIG_ETH_STM32_MULTICAST_FILTER)
 void eth_stm32_mcast_filter(const struct device *dev,
