@@ -881,6 +881,31 @@ int ptp_clock_pdelay(struct ptp_port *port, int64_t t1, int64_t t2, int64_t t3, 
 	return 0;
 }
 
+int ptp_clock_pdelay_one_step(struct ptp_port *port, int64_t t1, int64_t t4,
+			      ptp_timeinterval correction)
+{
+	int64_t elapsed, scaled;
+
+	if (port == NULL || t1 <= 0 || t4 < t1) {
+		return -EINVAL;
+	}
+
+	elapsed = t4 - t1;
+	if (__builtin_mul_overflow(elapsed, INT64_C(65536), &scaled) ||
+	    __builtin_sub_overflow(scaled, correction, &scaled) ||
+	    __builtin_sub_overflow(scaled, port->port_ds.delay_asymmetry, &scaled) || scaled < 0 ||
+	    scaled / 2 > (int64_t)CONFIG_PTP_PEER_DELAY_MAX_NS * 65536) {
+		return -ERANGE;
+	}
+
+	port->port_ds.mean_link_delay = scaled / 2;
+	/* One-step carries turnaround, not the peer's absolute response time. */
+	port->neighbor_rate_ratio = 1.0;
+	port->neighbor_rate_ratio_valid = false;
+	port->pdelay_prev_rate_sample_valid = false;
+	return 0;
+}
+
 sys_slist_t *ptp_clock_ports_list(void)
 {
 	return &ptp_clk.ports_list;

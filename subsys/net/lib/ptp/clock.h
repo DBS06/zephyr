@@ -157,6 +157,10 @@ void ptp_clock_delay(uint64_t egress, uint64_t ingress);
  */
 int ptp_clock_pdelay(struct ptp_port *port, int64_t t1, int64_t t2, int64_t t3, int64_t t4,
 		     ptp_timeinterval correction_resp, ptp_timeinterval correction_fup);
+
+/** Update peer delay from a one-step response, without remote absolute timestamps. */
+int ptp_clock_pdelay_one_step(struct ptp_port *port, int64_t t1, int64_t t4,
+			      ptp_timeinterval correction);
 /**
  * @brief Function for getting list of PTP Ports for the PTP Clock instance.
  *
