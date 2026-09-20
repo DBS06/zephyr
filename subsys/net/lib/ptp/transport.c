@@ -122,7 +122,6 @@ static int transport_join_ipv4_group(struct ptp_port *port, int socket,
 		LOG_ERR("Failed to join IPv4 %s multicast group", name);
 		return -1;
 	}
-
 	return 0;
 }
 
@@ -330,6 +329,17 @@ static int transport_l2_open(struct net_if *iface)
 		return -1;
 	}
 
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	int enabled = 1;
+
+	if (zsock_setsockopt(socket, ZSOCK_SOL_SOCKET, ZSOCK_SO_PTP_OFFLOAD, &enabled,
+			     sizeof(enabled)) != 0) {
+		LOG_ERR("Failed to enable PTP ownership metadata");
+		zsock_close(socket);
+		return -1;
+	}
+#endif
+
 	return socket;
 }
 
@@ -419,7 +429,34 @@ static int transport_send_l2(struct ptp_port *port, int socket, void *buf, int l
 		memcpy(addr.sll_addr, mcast_addr_l2, sizeof(mcast_addr_l2));
 	}
 
-	cnt = zsock_sendto(socket, buf, length, 0, (struct net_sockaddr *)&addr, sizeof(addr));
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	struct ptp_msg *ptp = buf;
+
+	if ((ptp->offload.flags & NET_PTP_PACKET_ONE_STEP) != 0U) {
+		uint8_t ctrl[NET_CMSG_SPACE(sizeof(ptp->offload))]
+			__aligned(__alignof__(struct net_cmsghdr)) = {0};
+		struct net_iovec iov = {.iov_base = buf, .iov_len = length};
+		struct net_msghdr message = {
+			.msg_name = &addr,
+			.msg_namelen = sizeof(addr),
+			.msg_iov = &iov,
+			.msg_iovlen = 1,
+			.msg_control = ctrl,
+			.msg_controllen = sizeof(ctrl),
+		};
+		struct net_cmsghdr *cmsg = NET_CMSG_FIRSTHDR(&message);
+
+		cmsg->cmsg_level = ZSOCK_SOL_SOCKET;
+		cmsg->cmsg_type = ZSOCK_SCM_PTP_OFFLOAD;
+		cmsg->cmsg_len = NET_CMSG_LEN(sizeof(ptp->offload));
+		memcpy(NET_CMSG_DATA(cmsg), &ptp->offload, sizeof(ptp->offload));
+		cnt = zsock_sendmsg(socket, &message, 0);
+	} else
+#endif
+	{
+		cnt = zsock_sendto(socket, buf, length, 0, (struct net_sockaddr *)&addr,
+				   sizeof(addr));
+	}
 	if (cnt < 1) {
 		LOG_ERR("Failed to send L2 message");
 		return -EFAULT;
@@ -556,7 +593,9 @@ static int transport_extract_rx_timestamp(struct ptp_msg *msg, struct net_msghdr
 
 	for (struct net_cmsghdr *cmsg = NET_CMSG_FIRSTHDR(msghdr); cmsg != NULL;
 	     cmsg = NET_CMSG_NXTHDR(msghdr, cmsg)) {
-		if (cmsg->cmsg_len < NET_CMSG_LEN(0)) {
+		if (cmsg->cmsg_len < NET_CMSG_LEN(0) ||
+		    cmsg->cmsg_len > msghdr->msg_controllen -
+					     ((uint8_t *)cmsg - (uint8_t *)msghdr->msg_control)) {
 			return -EINVAL;
 		}
 
@@ -572,12 +611,21 @@ static int transport_extract_rx_timestamp(struct ptp_msg *msg, struct net_msghdr
 			    msg->timestamp.host.nanosecond == UINT32_MAX ||
 			    msg->timestamp.host.nanosecond >= NSEC_PER_SEC) {
 				memset(&msg->timestamp.host, 0, sizeof(msg->timestamp.host));
-				return 0;
+				continue;
 			}
 
 			*rx_ts_found = true;
-			return 0;
 		}
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+		if (cmsg->cmsg_level == ZSOCK_SOL_SOCKET &&
+		    cmsg->cmsg_type == ZSOCK_SCM_PTP_OFFLOAD) {
+			if (cmsg->cmsg_len != NET_CMSG_LEN(sizeof(msg->offload))) {
+				return -EINVAL;
+			}
+			memcpy(&msg->offload, NET_CMSG_DATA(cmsg), sizeof(msg->offload));
+		}
+#endif
 	}
 
 	return 0;
@@ -604,7 +652,10 @@ static int transport_recv_l2_msg(struct ptp_port *port, struct ptp_msg *msg)
 {
 	bool recvmsg_ok = false;
 	bool rx_ts_found = false;
-	uint8_t ctrl[NET_CMSG_SPACE(sizeof(struct net_ptp_time))] = {0};
+	uint8_t ctrl[NET_CMSG_SPACE(sizeof(struct net_ptp_time)) +
+		     COND_CODE_1(CONFIG_NET_ETHERNET_PTP_OFFLOAD,
+				 (NET_CMSG_SPACE(sizeof(struct net_ptp_packet))), (0))]
+				 __aligned(__alignof__(struct net_cmsghdr)) = {0};
 	struct net_msghdr msghdr;
 	struct net_iovec iov;
 	int64_t now;
@@ -666,6 +717,13 @@ static int transport_recv_l2_msg(struct ptp_port *port, struct ptp_msg *msg)
 	}
 
 	transport_finalize_l2_rx_timestamp(msg, rx_ts_found);
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	if (!recvmsg_ok || (msghdr.msg_flags & ZSOCK_MSG_CTRUNC) != 0) {
+		/* Unknown response ownership must never cause a second response. */
+		msg->offload.flags = 0;
+	}
+#endif
 
 	return cnt;
 }
