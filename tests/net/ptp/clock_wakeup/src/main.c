@@ -478,6 +478,38 @@ ZTEST(ptp_clock_wakeup, test_pdelay_rejects_negative_and_incomplete_samples)
 		      "incomplete sample should not update meanLinkDelay");
 }
 
+ZTEST(ptp_clock_wakeup, test_one_step_pdelay_precision_and_rate_history)
+{
+	struct ptp_port port = {0};
+
+	port.neighbor_rate_ratio_valid = true;
+	port.pdelay_prev_rate_sample_valid = true;
+	port.port_ds.delay_asymmetry = 20 * INT64_C(65536);
+	zassert_ok(ptp_clock_pdelay_one_step(&port, 1000, 2600, 300 * INT64_C(65536) + 32768));
+	zassert_equal(port.port_ds.mean_link_delay, 639 * INT64_C(65536) + 49152);
+	zassert_false(port.neighbor_rate_ratio_valid);
+	zassert_false(port.pdelay_prev_rate_sample_valid);
+	zassert_equal(port.neighbor_rate_ratio, 1.0);
+}
+
+ZTEST(ptp_clock_wakeup, test_one_step_pdelay_rejects_overflow_and_invalid_delay)
+{
+	struct ptp_port port = {0};
+
+	port.port_ds.mean_link_delay = 123;
+	zassert_equal(ptp_clock_pdelay_one_step(&port, 1, INT64_MAX, 0), -ERANGE);
+	zassert_equal(ptp_clock_pdelay_one_step(&port, 1, 100, INT64_MIN), -ERANGE);
+	zassert_equal(ptp_clock_pdelay_one_step(&port, 100, 200, 101 * INT64_C(65536)), -ERANGE);
+	zassert_equal(ptp_clock_pdelay_one_step(&port, 200, 100, 0), -EINVAL);
+	zassert_equal(ptp_clock_pdelay_one_step(&port, 0, 100, 0), -EINVAL);
+	zassert_equal(ptp_clock_pdelay_one_step(
+			      &port, 1, 1 + 2 * (int64_t)CONFIG_PTP_PEER_DELAY_MAX_NS + 1, 0),
+		      -ERANGE);
+	zassert_equal(port.port_ds.mean_link_delay, 123);
+	zassert_ok(ptp_clock_pdelay_one_step(&port, 1,
+					     1 + 2 * (int64_t)CONFIG_PTP_PEER_DELAY_MAX_NS, 0));
+}
+
 ZTEST(ptp_clock_wakeup, test_pdelay_accepts_configured_maximum_only)
 {
 	struct ptp_port port = {0};
