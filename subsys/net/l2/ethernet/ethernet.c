@@ -1071,6 +1071,30 @@ static int ethernet_send(struct net_if *iface, struct net_pkt *pkt)
 	net_pkt_cursor_init(pkt);
 
 send:
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	if ((pkt->ptp.flags & NET_PTP_PACKET_ONE_STEP) != 0U) {
+		struct ethernet_config config;
+		struct net_pkt_cursor cursor;
+		struct net_eth_hdr hdr;
+
+		/* Raw sockets supply their own header and need not set the packet's
+		 * protocol metadata. Validate the wire EtherType for all senders.
+		 */
+		net_pkt_cursor_backup(pkt, &cursor);
+		net_pkt_cursor_init(pkt);
+		ret = net_pkt_read(pkt, &hdr, sizeof(hdr));
+		net_pkt_cursor_restore(pkt, &cursor);
+		if (ret < 0 || hdr.type != net_htons(NET_ETH_PTYPE_PTP) ||
+		    net_eth_get_hw_config(iface, ETHERNET_CONFIG_TYPE_PTP, &config) != 0 ||
+		    config.ptp.generation != pkt->ptp.generation ||
+		    (config.ptp.operations &
+		     (ETHERNET_PTP_ONE_STEP_SYNC | ETHERNET_PTP_ONE_STEP_PDELAY_RESP)) == 0U) {
+			ret = -ENOTSUP;
+			goto error;
+		}
+	}
+#endif
+
 	ret = net_l2_send(api->send, dev, iface, pkt);
 	if (ret != 0) {
 		eth_stats_update_errors_tx(iface);

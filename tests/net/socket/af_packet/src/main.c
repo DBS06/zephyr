@@ -110,6 +110,10 @@ static struct net_ptp_time test_rx_timestamp = {
 	.nanosecond = 567890123,
 };
 static bool test_rx_timestamp_marked = true;
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+static struct net_ptp_packet test_rx_ptp;
+static struct net_ptp_packet last_tx_ptp;
+#endif
 
 static uint8_t lladdr1[] = { 0x02, 0x01, 0x01, 0x01, 0x01, 0x01 };
 static uint8_t lladdr2[] = { 0x02, 0x02, 0x02, 0x02, 0x02, 0x02 };
@@ -168,6 +172,12 @@ static int eth_fake_send(const struct device *dev, struct net_pkt *pkt)
 	}
 
 	recv_pkt = net_pkt_rx_clone(pkt, K_NO_WAIT);
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	last_tx_ptp = pkt->ptp;
+	zassert_mem_equal(&recv_pkt->ptp, &pkt->ptp, sizeof(pkt->ptp));
+	recv_pkt->ptp = test_rx_ptp;
+#endif
 
 	net_pkt_set_iface(recv_pkt, target_iface);
 	net_pkt_set_timestamp(recv_pkt, &test_rx_timestamp);
@@ -238,11 +248,30 @@ static int eth_fake_set_config(const struct device *dev, struct net_if *iface,
 	return eth_filter_ret;
 }
 
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+static int eth_fake_get_config(const struct device *dev, struct net_if *iface,
+			       enum ethernet_config_type type, struct ethernet_config *cfg)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(iface);
+	if (type != ETHERNET_CONFIG_TYPE_PTP) {
+		return -ENOTSUP;
+	}
+	memset(cfg, 0, sizeof(*cfg));
+	cfg->ptp.operations = ETHERNET_PTP_ONE_STEP_SYNC;
+	cfg->ptp.generation = 42;
+	return 0;
+}
+#endif
+
 static struct ethernet_api eth_fake_api_funcs = {
 	.iface_api.init = eth_fake_iface_init,
 	.get_capabilities = eth_fake_get_capabilities,
 	.set_config = eth_fake_set_config,
 	.send = eth_fake_send,
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	.get_config = eth_fake_get_config,
+#endif
 };
 
 ETH_NET_DEVICE_INIT(eth_fake1, "eth_fake1", NULL, NULL, &eth_fake_data1, NULL,
@@ -1139,6 +1168,145 @@ ZTEST(socket_packet, test_dgram_sock_recvmsg_timestamping_unmarked)
 	test_recvmsg_timestamping_common(NET_CMSG_SPACE(sizeof(struct net_ptp_time)), false, false);
 	test_rx_timestamp_marked = true;
 }
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+static void ptp_packet_exchange(bool truncate, int sock_type, uint16_t protocol,
+				uint16_t frame_protocol)
+{
+	struct net_sockaddr_ll dst;
+	struct net_iovec iov = {.iov_base = (void *)test_payload, .iov_len = sizeof(test_payload)};
+	union {
+		struct net_cmsghdr align;
+		uint8_t bytes[NET_CMSG_SPACE(sizeof(struct net_ptp_packet))];
+	} ctrl = {0};
+	struct net_msghdr msg = {
+		.msg_name = &dst,
+		.msg_namelen = sizeof(dst),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = ctrl.bytes,
+		.msg_controllen = sizeof(ctrl.bytes),
+	};
+	struct net_ptp_packet tx = {.flags = NET_PTP_PACKET_ONE_STEP, .generation = 42};
+	struct net_cmsghdr *cmsg = NET_CMSG_FIRSTHDR(&msg);
+	uint16_t pkt_len = sizeof(test_payload);
+	int enabled = 1;
+
+	setup_packet_socket(&packet_sock_1, sock_type, net_htons(protocol));
+	setup_packet_socket(&packet_sock_2, NET_SOCK_DGRAM, net_htons(ETH_P_ALL));
+	bind_packet_socket(packet_sock_2, ud.first);
+	prepare_test_dst_lladdr(&dst, NET_ETH_PTYPE_PTP, lladdr1, ud.second);
+	if (sock_type == NET_SOCK_RAW) {
+		prepare_test_packet(sock_type, frame_protocol, lladdr2, lladdr1, &pkt_len);
+		iov.iov_base = tx_buf;
+		iov.iov_len = pkt_len;
+	}
+	zassert_ok(zsock_setsockopt(packet_sock_2, ZSOCK_SOL_SOCKET, ZSOCK_SO_PTP_OFFLOAD, &enabled,
+				    sizeof(enabled)));
+	test_rx_ptp = (struct net_ptp_packet){
+		.flags = NET_PTP_PACKET_RX_VALID | NET_PTP_PACKET_RX_RESPONDED,
+		.generation = 41,
+	};
+	cmsg->cmsg_level = ZSOCK_SOL_SOCKET;
+	cmsg->cmsg_type = ZSOCK_SCM_PTP_OFFLOAD;
+	cmsg->cmsg_len = NET_CMSG_LEN(sizeof(tx));
+	memcpy(NET_CMSG_DATA(cmsg), &tx, sizeof(tx));
+	memset(&last_tx_ptp, 0, sizeof(last_tx_ptp));
+	zassert_equal(zsock_sendmsg(packet_sock_1, &msg, 0), pkt_len);
+	iov.iov_base = rx_buf;
+	iov.iov_len = sizeof(rx_buf);
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_controllen = truncate ? sizeof(ctrl.bytes) - 1 : sizeof(ctrl.bytes);
+	if (frame_protocol != NET_ETH_PTYPE_PTP) {
+		zassert_equal(zsock_recvmsg(packet_sock_2, &msg, 0), -1);
+		zassert_equal(errno, EAGAIN);
+		zassert_equal(last_tx_ptp.flags, 0, "non-PTP frame must not reach the driver");
+		memset(&test_rx_ptp, 0, sizeof(test_rx_ptp));
+		return;
+	}
+	zassert_equal(zsock_recvmsg(packet_sock_2, &msg, 0), sizeof(test_payload));
+	zassert_mem_equal(rx_buf, test_payload, sizeof(test_payload));
+	zassert_mem_equal(&last_tx_ptp, &tx, sizeof(tx));
+	if (truncate) {
+		zassert_true((msg.msg_flags & ZSOCK_MSG_CTRUNC) != 0);
+	} else {
+		cmsg = NET_CMSG_FIRSTHDR(&msg);
+		zassert_not_null(cmsg);
+		zassert_equal(cmsg->cmsg_type, ZSOCK_SCM_PTP_OFFLOAD);
+		zassert_mem_equal(NET_CMSG_DATA(cmsg), &test_rx_ptp, sizeof(test_rx_ptp));
+	}
+	memset(&test_rx_ptp, 0, sizeof(test_rx_ptp));
+}
+
+ZTEST(socket_packet, test_ptp_metadata_survives_socket_and_clone)
+{
+	ptp_packet_exchange(false, NET_SOCK_DGRAM, NET_ETH_PTYPE_PTP, NET_ETH_PTYPE_PTP);
+}
+
+ZTEST(socket_packet, test_ptp_metadata_truncation_is_reported)
+{
+	ptp_packet_exchange(true, NET_SOCK_DGRAM, NET_ETH_PTYPE_PTP, NET_ETH_PTYPE_PTP);
+}
+
+ZTEST(socket_packet, test_ptp_raw_metadata_no_protocol)
+{
+	ptp_packet_exchange(false, NET_SOCK_RAW, 0, NET_ETH_PTYPE_PTP);
+}
+
+ZTEST(socket_packet, test_ptp_raw_metadata_wildcard_protocol)
+{
+	ptp_packet_exchange(false, NET_SOCK_RAW, ETH_P_ALL, NET_ETH_PTYPE_PTP);
+}
+
+ZTEST(socket_packet, test_ptp_raw_metadata_mismatched_protocol)
+{
+	/* A raw socket's protocol is a receive filter, not its wire EtherType. */
+	ptp_packet_exchange(false, NET_SOCK_RAW, ETH_P_ECAT, NET_ETH_PTYPE_PTP);
+}
+
+ZTEST(socket_packet, test_ptp_raw_metadata_rejects_non_ptp_frame)
+{
+	ptp_packet_exchange(false, NET_SOCK_RAW, 0, ETH_P_ECAT);
+}
+
+ZTEST(socket_packet, test_ptp_rejects_invalid_tx_instructions)
+{
+	struct net_sockaddr_ll dst;
+	struct net_iovec iov = {.iov_base = (void *)test_payload, .iov_len = sizeof(test_payload)};
+	union {
+		struct net_cmsghdr align;
+		uint8_t bytes[NET_CMSG_SPACE(sizeof(struct net_ptp_packet))];
+	} ctrl = {0};
+	struct net_msghdr msg = {
+		.msg_name = &dst,
+		.msg_namelen = sizeof(dst),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = ctrl.bytes,
+		.msg_controllen = sizeof(ctrl.bytes),
+	};
+	struct net_ptp_packet tx = {.flags = NET_PTP_PACKET_RX_RESPONDED, .generation = 42};
+	struct net_cmsghdr *cmsg = NET_CMSG_FIRSTHDR(&msg);
+
+	setup_packet_socket(&packet_sock_1, NET_SOCK_DGRAM, net_htons(NET_ETH_PTYPE_PTP));
+	prepare_test_dst_lladdr(&dst, NET_ETH_PTYPE_PTP, lladdr1, ud.second);
+	cmsg->cmsg_level = ZSOCK_SOL_SOCKET;
+	cmsg->cmsg_type = ZSOCK_SCM_PTP_OFFLOAD;
+	cmsg->cmsg_len = NET_CMSG_LEN(sizeof(tx));
+	memcpy(NET_CMSG_DATA(cmsg), &tx, sizeof(tx));
+	zassert_equal(zsock_sendmsg(packet_sock_1, &msg, 0), -1);
+	zassert_equal(errno, EINVAL);
+	tx.flags = NET_PTP_PACKET_ONE_STEP | NET_PTP_PACKET_INGRESS_VALID;
+	tx.ingress_nanoseconds = NSEC_PER_SEC;
+	memcpy(NET_CMSG_DATA(cmsg), &tx, sizeof(tx));
+	zassert_equal(zsock_sendmsg(packet_sock_1, &msg, 0), -1);
+	zassert_equal(errno, EINVAL);
+	cmsg->cmsg_len--;
+	zassert_equal(zsock_sendmsg(packet_sock_1, &msg, 0), -1);
+	zassert_equal(errno, EINVAL);
+}
+#endif
 
 ZTEST(socket_packet, test_dgram_sock_recvfrom_proto_wildcard)
 {

@@ -2765,6 +2765,41 @@ static void set_pkt_txtime(struct net_pkt *pkt, const struct net_msghdr *msghdr)
 	}
 }
 
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+static int set_pkt_ptp(struct net_pkt *pkt, const struct net_msghdr *msg, int family)
+{
+	bool found = false;
+
+	for (struct net_cmsghdr *cmsg = NET_CMSG_FIRSTHDR(msg); cmsg != NULL;
+	     cmsg = NET_CMSG_NXTHDR(msg, cmsg)) {
+		if (cmsg->cmsg_len < NET_CMSG_LEN(0) ||
+		    cmsg->cmsg_len >
+			    (uint8_t *)msg->msg_control + msg->msg_controllen - (uint8_t *)cmsg) {
+			return -EINVAL;
+		}
+		if (cmsg->cmsg_level != ZSOCK_SOL_SOCKET ||
+		    cmsg->cmsg_type != ZSOCK_SCM_PTP_OFFLOAD) {
+			continue;
+		}
+		if (found || family != NET_AF_PACKET ||
+		    cmsg->cmsg_len != NET_CMSG_LEN(sizeof(pkt->ptp))) {
+			return -EINVAL;
+		}
+		memcpy(&pkt->ptp, NET_CMSG_DATA(cmsg), sizeof(pkt->ptp));
+		if ((pkt->ptp.flags & NET_PTP_PACKET_ONE_STEP) == 0U ||
+		    (pkt->ptp.flags & ~(NET_PTP_PACKET_ONE_STEP | NET_PTP_PACKET_INGRESS_VALID)) !=
+			    0U ||
+		    pkt->ptp.reserved != 0U || pkt->ptp.ingress_nanoseconds >= NSEC_PER_SEC ||
+		    ((pkt->ptp.flags & NET_PTP_PACKET_INGRESS_VALID) == 0U &&
+		     (pkt->ptp.ingress_seconds != 0U || pkt->ptp.ingress_nanoseconds != 0U))) {
+			return -EINVAL;
+		}
+		found = true;
+	}
+	return 0;
+}
+#endif
+
 static void set_pkt_hoplimit(struct net_pkt *pkt, const struct net_msghdr *msg_hdr)
 {
 	struct net_cmsghdr *cmsg;
@@ -3218,6 +3253,12 @@ static int context_sendto(struct net_context *context,
 	 * to net_pkt as there is no other way to store it.
 	 */
 	if (msghdr && msghdr->msg_control && msghdr->msg_controllen) {
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+		ret = set_pkt_ptp(pkt, msghdr, family);
+		if (ret < 0) {
+			goto fail;
+		}
+#endif
 		if (IS_ENABLED(CONFIG_NET_CONTEXT_TXTIME)) {
 			int is_txtime;
 

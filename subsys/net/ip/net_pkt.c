@@ -2169,6 +2169,9 @@ static inline void clone_pkt_cb(struct net_pkt *pkt, struct net_pkt *clone_pkt)
 
 static void clone_pkt_attributes(struct net_pkt *pkt, struct net_pkt *clone_pkt)
 {
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	clone_pkt->ptp = pkt->ptp;
+#endif
 	net_pkt_set_family(clone_pkt, net_pkt_family(pkt));
 	net_pkt_set_context(clone_pkt, net_pkt_context(pkt));
 	net_pkt_set_ip_hdr_len(clone_pkt, net_pkt_ip_hdr_len(pkt));
