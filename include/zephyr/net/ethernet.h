@@ -24,6 +24,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/ethernet_vlan.h>
+#include <zephyr/net/ethernet_ptp.h>
 #include <zephyr/net/ptp_time.h>
 #include <zephyr/net/virtual.h>
 #include <zephyr/random/random.h>
@@ -230,6 +231,7 @@ enum ethernet_config_type {
 	ETHERNET_CONFIG_TYPE_RX_CHECKSUM_SUPPORT,
 	ETHERNET_CONFIG_TYPE_TX_CHECKSUM_SUPPORT,
 	ETHERNET_CONFIG_TYPE_EXTRA_TX_PKT_HEADROOM,
+	ETHERNET_CONFIG_TYPE_PTP,
 };
 
 enum ethernet_qav_param_type {
@@ -534,6 +536,7 @@ struct ethernet_config {
 		struct ethernet_filter filter;
 
 		uint16_t extra_tx_pkt_headroom;
+		struct ethernet_ptp_config ptp;
 	} /**< Value for the selected Ethernet configuration type */;
 };
 

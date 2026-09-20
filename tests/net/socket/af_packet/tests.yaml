@@ -7,6 +7,11 @@ common:
 tests:
   net.socket.af_packet:
     min_ram: 21
+  net.socket.af_packet.ptp_offload:
+    min_ram: 32
+    extra_configs:
+      - CONFIG_PTP_CLOCK=y
+      - CONFIG_NET_ETHERNET_PTP_OFFLOAD=y
   net.socket.af_packet.mgmt_event:
     min_ram: 24
     extra_configs:
