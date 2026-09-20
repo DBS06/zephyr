@@ -23,6 +23,7 @@
 #include <stdbool.h>
 
 #include <zephyr/net_buf.h>
+#include <zephyr/net/ethernet_ptp.h>
 
 #if defined(CONFIG_IEEE802154)
 #include <zephyr/net/ieee802154_pkt.h>
@@ -229,6 +230,11 @@ struct net_pkt {
 	struct net_linkaddr lladdr_src;
 	struct net_linkaddr lladdr_dst;
 	uint16_t ll_proto_type;
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	/** PTP TX instructions or RX response ownership. */
+	struct net_ptp_packet ptp;
+#endif
 
 #if defined(CONFIG_NET_IP)
 	uint8_t ip_hdr_len;	/* pre-filled in order to avoid func call */

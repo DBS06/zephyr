@@ -433,6 +433,11 @@ __net_socket struct net_context {
 		uint8_t timestamping;
 #endif
 
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+		/** Receive PTP ownership ancillary data on packet sockets. */
+		bool ptp_offload;
+#endif
+
 #if defined(CONFIG_NET_CONTEXT_LINGER)
 		/** Socket SO_LINGER option. When enabled (l_onoff != 0) with a
 		 * zero timeout (l_linger == 0), close() aborts the connection
