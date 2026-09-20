@@ -11,6 +11,10 @@ common:
   depends_on: netif
 tests:
   net.ptp.port_events: {}
+  net.ptp.port_events.offload:
+    extra_configs:
+      - CONFIG_PTP_CLOCK=y
+      - CONFIG_NET_ETHERNET_PTP_OFFLOAD=y
   net.ptp.port_events.hybrid:
     extra_configs:
       - CONFIG_PTP_NETWORK_MODE_HYBRID=y
