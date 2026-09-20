@@ -714,6 +714,13 @@ New APIs and options
     and :kconfig:option:`CONFIG_NET_SOCKETS_PACKET_MCAST_MEMBERSHIP_COUNT` sets
     how many memberships can be active at the same time.
   * :kconfig:option:`CONFIG_PTP_NETWORK_MODE_HYBRID`
+  * Added optional Ethernet PTP packet configuration and packet-socket ancillary
+    metadata for one-step insertion and automatic message generation. The
+    STM32H563 HAL-v2 driver supports these operations for ordinary clocks over
+    Ethernet. Two-step operation remains the default; runtime capabilities and
+    hardware template limits determine fallback. See :ref:`ptp_interface`.
+  * PTP peer-delay measurement now accepts one-step responses and retains
+    fractional correction-field precision.
 
 * Power Management
 

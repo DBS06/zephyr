@@ -41,7 +41,7 @@ In the table below all supported features are listed.
     Transparent Clock,
     Management Node,
     End to end delay mechanism, yes
-    Peer to peer delay mechanism, yes (two-step)
+    Peer to peer delay mechanism, yes (one-step and two-step peers)
     Multicast operation mode, yes
     Hybrid operation mode, yes
     Unicast operation mode,
@@ -165,17 +165,123 @@ between frame arrival and PHC read.
 This behavior is expected for L2 AF_PACKET paths without true driver-provided
 RX hardware timestamps.
 
-For IEEE 802.3 transport, Sync is sent in two-step mode and Follow_Up is
+By default, Sync is sent in two-step mode and Follow_Up is
 generated from TX timestamp callbacks. If a TX timestamp is missing or late,
 the stack logs a warning and skips Follow_Up for that Sync sequence, then
 continues normal Sync transmission on subsequent intervals (best-effort
 behavior).
 
 Peer-to-peer delay measurement can be selected with
-:kconfig:option:`CONFIG_PTP_DELAY_MECHANISM_P2P`. The first supported P2P mode
-is two-step ``Pdelay_Req`` / ``Pdelay_Resp`` /
-``Pdelay_Resp_Follow_Up``. One-step ``Pdelay_Resp`` samples are rejected and
-logged for a later implementation.
+:kconfig:option:`CONFIG_PTP_DELAY_MECHANISM_P2P`. Both two-step and one-step
+``Pdelay_Resp`` are accepted. A one-step response carries the remote turnaround
+time in its correction field and does not need ``Pdelay_Resp_Follow_Up``.
+The calculation retains the fractional nanoseconds in the correction field.
+One-step samples invalidate the neighbor-rate estimate because they do not
+provide the separate remote timestamps needed by the estimator.
+
+Optional packet acceleration
+****************************
+
+Hardware timestamp capture, one-step packet modification, and automatic packet
+generation are separate capabilities. The ``PTP_PACKET_MODE`` choice selects a
+preference; the stack discovers the Ethernet driver's capabilities at runtime:
+
+* :kconfig:option:`CONFIG_PTP_PACKET_TWO_STEP` is the default and preserves
+  software-generated messages and hardware timestamp callbacks.
+* :kconfig:option:`CONFIG_PTP_PACKET_ONE_STEP` requests timestamp insertion in
+  software-generated ``Sync`` and turnaround correction in ``Pdelay_Resp``.
+  These messages clear ``twoStepFlag`` and have no follow-up message.
+* :kconfig:option:`CONFIG_PTP_PACKET_AUTO` also permits hardware-generated
+  ``Sync``, ``Delay_Resp``, and ``Pdelay_Resp`` when their required properties
+  can be represented by the hardware template.
+
+Packet acceleration is limited to ordinary clocks using IEEE 802.3 transport.
+BMCA, Announce, servo control, and generation and matching of delay requests
+remain in software. Unsupported operations use software scheduling and one-step
+insertion when available, otherwise two-step timestamping. An uncertain
+transmission is abandoned, not retransmitted using another mode.
+
+Ethernet driver and packet-socket contract
+=========================================
+
+``ETHERNET_CONFIG_TYPE_PTP`` uses :c:struct:`ethernet_ptp_config` to discover
+capabilities and configure operations, source port identity, domain, role, delay
+mechanism, and intervals. The effective operations and configuration generation
+are returned by ``get_config``. This interface does not change the PHC or its
+frequency adjustment. A successful configuration change must serialize packet
+submission and reception and preserve the old ownership of queued RX packets.
+
+:kconfig:option:`CONFIG_NET_ETHERNET_PTP_OFFLOAD` adds optional
+:c:struct:`net_ptp_packet` metadata to packets and their clones. Packet sockets
+enable reception with an integer ``ZSOCK_SO_PTP_OFFLOAD`` socket option at
+``ZSOCK_SOL_SOCKET``. ``sendmsg`` and ``recvmsg`` carry this structure in a
+``ZSOCK_SCM_PTP_OFFLOAD`` control message at the same level. Existing timestamp
+ancillary messages remain independent and can accompany it.
+
+TX metadata requests one-step processing with the current generation and, for a
+peer response, the request's ingress timestamp. Invalid metadata or stale
+generations are rejected before submission. RX metadata assigns response
+ownership for that packet's generation; ``NET_PTP_PACKET_RX_RESPONDED`` is
+**not** confirmation of successful transmission. The stack suppresses software
+responses to hardware-owned requests, including requests queued before a mode
+change. Missing or truncated ownership information after enabling automatic
+responses discards the exchange to avoid duplicate responses.
+
+STM32H563 limitations
+====================
+
+:kconfig:option:`CONFIG_ETH_STM32_HAL_PTP_OFFLOAD` enables the STM32H563 HAL-v2
+implementation. Other STM32 variants keep their existing transmit path. The
+H563 path reserves a context descriptor and data descriptor together for each
+packet, including ordinary traffic, and supports synchronous and asynchronous
+TX. One ring slot remains unused; at least four TX descriptors are required.
+
+The driver reports operation bits 0 through 4 for one-step Sync, one-step peer
+response, automatic Sync, automatic delay response, and automatic peer response,
+respectively. Effective operation masks are logged when the configuration
+changes. The following restrictions apply:
+
+* Offload is negotiated only for untagged, default-profile PTPv2 over Ethernet.
+  VLAN interfaces and unsupported drivers retain software operation. When an
+  automatic responder is active, RX ownership also covers C-tagged requests
+  and either PTP multicast address accepted by the MAC filter. This prevents
+  duplicate software responses, including for priority-tagged requests received
+  on the physical port. One-step TX insertion still requires untagged frames.
+  Hybrid mode uses insertion only; automatic responses are not negotiated.
+* Automatic Sync requires a transmitter role, zero second-octet Sync flags,
+  and a log interval from 0 through 15. Negative log intervals use software
+  scheduling because RM0481 documents an approximate subsecond hardware cadence.
+* Automatic E2E Delay_Resp requires a transmitter role, a Sync log interval
+  from -15 through 15, and a Delay_Req minus Sync log interval from 0 through 5.
+* Automatic Pdelay_Resp requires P2P operation. P2P automatic Sync also enables
+  the peer responder because the hardware cannot separate these operations.
+* Software peer-response insertion accepts ingress seconds through
+  ``UINT32_MAX``. Wider timestamps use a two-step response.
+* Automatic Delay_Req and Pdelay_Req are disabled: the hardware sequence
+  counters cannot be read to match requests reliably in software.
+* Automatic traffic stops on shutdown, link loss, or a DMA fault. After a fault,
+  acceleration stays disabled until device reinitialization. DMA-owned buffers
+  are retained until completion or a confirmed DMA stop; a persistently stuck
+  DMA requires platform recovery. The PHC is not reset.
+
+RM0481 Table 684 places the context descriptor's OSTC bit at bit 27; the prose
+description naming bit 20 is inconsistent with the table. The implementation
+uses bit 27 and clears one-step context on subsequent ordinary packets.
+
+`STM32H563 errata ES0565`_ sections 2.22.6 and 2.22.7 also apply. Timestamp-status
+interrupts are not enabled by packet offload; this avoids adding a status-clearing
+path affected by the shadow-register erratum. Automatic packets can be corrupted
+by a bus error and there is no hardware workaround. The driver disables offload
+on fatal DMA bus errors, but cannot retract packets already transmitted.
+
+Hardware acceptance requires captures against a hardware-timestamp-capable peer
+in E2E and P2P, both roles, and all three modes. Check origin timestamps,
+correction fields, cadence, sequence matching, absence of duplicate responses
+and follow-ups, synchronization, role changes, link recovery, and fault handling.
+Native tests and board builds do not establish wire-level interoperability.
+
+.. _STM32H563 errata ES0565:
+   https://www.st.com/resource/en/errata_sheet/es0565-stm32h562xx563xx573xx-device-errata-stmicroelectronics.pdf
 
 Supported hardware
 ******************
