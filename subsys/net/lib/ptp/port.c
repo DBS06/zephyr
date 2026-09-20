@@ -301,6 +301,151 @@ static bool port_timestamp_is_missing(const struct net_ptp_time *ts)
 	return ts->second == UINT64_MAX || (ts->second == 0 && ts->nanosecond == 0);
 }
 
+static bool port_offload_enabled(struct ptp_port *port, uint32_t operation)
+{
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	return (port->offload.operations & operation) != 0U;
+#else
+	ARG_UNUSED(port);
+	ARG_UNUSED(operation);
+	return false;
+#endif
+}
+
+static int port_offload_refresh(struct ptp_port *port, bool disable)
+{
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	const struct ptp_default_ds *dds = ptp_clock_default_ds();
+	const struct device *dev;
+	const struct ethernet_api *api;
+	struct ethernet_config current = {0}, desired = {0};
+	enum ptp_port_state state = ptp_port_state(port);
+	bool transmitter = state == PTP_PS_TIME_TRANSMITTER || state == PTP_PS_GRAND_MASTER;
+	bool active = transmitter || port_pdelay_active(port) || state == PTP_PS_TIME_RECEIVER ||
+		      state == PTP_PS_UNCALIBRATED;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_PTP_PACKET_ONE_STEP) && !IS_ENABLED(CONFIG_PTP_PACKET_AUTO)) {
+		return 0;
+	}
+	dev = net_if_get_device(port->iface);
+	if (dev == NULL) {
+		return -ENODEV;
+	}
+	api = dev->api;
+	ret = net_eth_get_hw_config(port->iface, ETHERNET_CONFIG_TYPE_PTP, &current);
+	if (ret != 0 || api->set_config == NULL || net_eth_is_vlan_interface(port->iface)) {
+		memset(&port->offload, 0, sizeof(port->offload));
+		return 0;
+	}
+	desired = current;
+	desired.ptp.operations = 0;
+	desired.ptp.domain = dds->domain;
+	memcpy(desired.ptp.port_id, port->port_ds.id.clk_id.id, 8);
+	sys_put_be16(port->port_ds.id.port_number, &desired.ptp.port_id[8]);
+	desired.ptp.p2p = port->port_ds.delay_mechanism == PTP_DM_P2P;
+	desired.ptp.transmitter = transmitter;
+	desired.ptp.sync_flags = ptp_clock_time_prop_ds()->flags;
+	desired.ptp.log_sync_interval = port->port_ds.log_sync_interval;
+	desired.ptp.log_delay_req_interval = port->port_ds.log_min_delay_req_interval;
+
+	if (active && !disable) {
+		if (transmitter) {
+			desired.ptp.operations |= ETHERNET_PTP_ONE_STEP_SYNC;
+		}
+		if (desired.ptp.p2p != 0U) {
+			desired.ptp.operations |= ETHERNET_PTP_ONE_STEP_PDELAY_RESP;
+		}
+		if (IS_ENABLED(CONFIG_PTP_PACKET_AUTO) &&
+		    !IS_ENABLED(CONFIG_PTP_NETWORK_MODE_HYBRID)) {
+			if (transmitter && desired.ptp.sync_flags == 0U &&
+			    IN_RANGE(desired.ptp.log_sync_interval, 0, 15)) {
+				desired.ptp.operations |= ETHERNET_PTP_AUTO_SYNC;
+			}
+			if (desired.ptp.p2p != 0U) {
+				desired.ptp.operations |= ETHERNET_PTP_AUTO_PDELAY_RESP;
+			} else if (transmitter &&
+				   IN_RANGE(desired.ptp.log_sync_interval, -15, 15) &&
+				   IN_RANGE(desired.ptp.log_delay_req_interval -
+						    desired.ptp.log_sync_interval,
+					    0, 5)) {
+				desired.ptp.operations |= ETHERNET_PTP_AUTO_DELAY_RESP;
+			}
+		}
+	}
+	desired.ptp.operations &= current.ptp.capabilities;
+	if (memcmp(&desired.ptp, &current.ptp, sizeof(desired.ptp)) != 0) {
+		/* Abandon outstanding software responses before transferring ownership. */
+		if (port->sync_fup_pending) {
+			port->sync_fup_pending = false;
+			port->seq_id.sync++;
+			net_if_unregister_timestamp_cb(&port->sync_ts_cb);
+		}
+		port_pdelay_clear_response_exchange(port);
+		ret = api->set_config(dev, port->iface, ETHERNET_CONFIG_TYPE_PTP, &desired);
+		if (ret == -ENOTSUP) {
+			desired.ptp.operations &=
+				ETHERNET_PTP_ONE_STEP_SYNC | ETHERNET_PTP_ONE_STEP_PDELAY_RESP;
+			ret = api->set_config(dev, port->iface, ETHERNET_CONFIG_TYPE_PTP, &desired);
+		}
+		if (ret != 0) {
+			LOG_ERR("Cannot change PTP packet ownership: %d", ret);
+			return ret;
+		}
+		ret = net_eth_get_hw_config(port->iface, ETHERNET_CONFIG_TYPE_PTP, &current);
+		if (ret != 0) {
+			return ret;
+		}
+		LOG_INF("Port %u PTP packet operations 0x%x", port->port_ds.id.port_number,
+			current.ptp.operations);
+	}
+	port->offload = current.ptp;
+	if ((current.ptp.operations &
+	     (ETHERNET_PTP_AUTO_DELAY_RESP | ETHERNET_PTP_AUTO_PDELAY_RESP)) != 0U) {
+		port->offload_response_metadata_required = true;
+	}
+#else
+	ARG_UNUSED(port);
+	ARG_UNUSED(disable);
+#endif
+	return 0;
+}
+
+static bool port_offload_response_owned(struct ptp_port *port, struct ptp_msg *msg)
+{
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	if ((msg->offload.flags & NET_PTP_PACKET_RX_RESPONDED) != 0U) {
+		return true;
+	}
+	if (port->offload_response_metadata_required &&
+	    (msg->offload.flags & NET_PTP_PACKET_RX_VALID) == 0U) {
+		return true;
+	}
+#else
+	ARG_UNUSED(port);
+	ARG_UNUSED(msg);
+#endif
+	return false;
+}
+
+static void port_offload_tx(struct ptp_port *port, struct ptp_msg *msg,
+			    const struct net_ptp_time *ingress)
+{
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	msg->offload.flags = NET_PTP_PACKET_ONE_STEP;
+	msg->offload.generation = port->offload.generation;
+	if (ingress != NULL) {
+		msg->offload.flags |= NET_PTP_PACKET_INGRESS_VALID;
+		msg->offload.ingress_seconds = ingress->second;
+		msg->offload.ingress_nanoseconds = ingress->nanosecond;
+	}
+#else
+	ARG_UNUSED(port);
+	ARG_UNUSED(msg);
+	ARG_UNUSED(ingress);
+#endif
+}
+
 static int64_t port_timestamp_to_ns(const struct net_ptp_time *ts)
 {
 	return (int64_t)(ts->second * NSEC_PER_SEC + ts->nanosecond);
@@ -371,7 +516,7 @@ static void port_pdelay_try_complete(struct ptp_port *port)
 	struct ptp_msg *fup = port->last_pdelay_resp_fup;
 	int64_t t1, t2, t3, t4;
 
-	if (req == NULL || resp == NULL || fup == NULL) {
+	if (req == NULL || resp == NULL) {
 		return;
 	}
 
@@ -388,6 +533,28 @@ static void port_pdelay_try_complete(struct ptp_port *port)
 		LOG_WRN("Port %d missing RX timestamp for Pdelay_Resp sequence %u",
 			port->port_ds.id.port_number, resp->header.sequence_id);
 		port_pdelay_clear_request_exchange(port);
+		return;
+	}
+
+	if ((resp->header.flags[0] & PTP_MSG_TWO_STEP_FLAG) == 0U) {
+		if (fup != NULL &&
+		    !ptp_port_id_eq(&resp->header.src_port_id, &fup->header.src_port_id)) {
+			port_pdelay_clear_request_exchange(port);
+			return;
+		}
+		if (resp->header.sequence_id == port->pdelay_req_sequence_id &&
+		    ptp_port_id_eq(&resp->pdelay_resp.req_port_id, &port->port_ds.id)) {
+			t1 = port_timestamp_to_ns(&req->timestamp.host);
+			t4 = port_timestamp_to_ns(&resp->timestamp.host);
+			if (ptp_clock_pdelay_one_step(port, t1, t4, resp->header.correction) < 0) {
+				LOG_DBG("Rejected one-step peer delay sample");
+			}
+		}
+		port_pdelay_clear_request_exchange(port);
+		return;
+	}
+
+	if (fup == NULL) {
 		return;
 	}
 
@@ -811,8 +978,14 @@ static int port_sync_msg_transmit(struct ptp_port *port)
 {
 	const struct ptp_default_ds *dds = ptp_clock_default_ds();
 	const struct ptp_time_prop_ds *tpds = ptp_clock_time_prop_ds();
-	struct ptp_msg *msg = ptp_msg_alloc();
+	struct ptp_msg *msg;
 	int ret;
+	bool one_step = port_offload_enabled(port, ETHERNET_PTP_ONE_STEP_SYNC);
+
+	if (port_offload_enabled(port, ETHERNET_PTP_AUTO_SYNC)) {
+		return 0;
+	}
+	msg = ptp_msg_alloc();
 
 	if (!msg) {
 		return -ENOMEM;
@@ -840,13 +1013,17 @@ static int port_sync_msg_transmit(struct ptp_port *port)
 	msg->sync.origin_timestamp.seconds_low = 0;
 	msg->sync.origin_timestamp.nanoseconds = 0;
 
-	net_if_register_timestamp_cb(&port->sync_ts_cb,
-				     NULL,
-				     port->iface,
-				     port_sync_timestamp_cb);
+	if (one_step) {
+		msg->header.flags[0] &= ~PTP_MSG_TWO_STEP_FLAG;
+		port_offload_tx(port, msg, NULL);
+		port->seq_id.sync++;
+	} else {
+		net_if_register_timestamp_cb(&port->sync_ts_cb, NULL, port->iface,
+					     port_sync_timestamp_cb);
 
-	port->sync_fup_pending = true;
-	port->sync_fup_sequence_id = msg->header.sequence_id;
+		port->sync_fup_pending = true;
+		port->sync_fup_sequence_id = msg->header.sequence_id;
+	}
 
 	ret = port_msg_send(port, msg, PTP_SOCKET_EVENT);
 	ptp_msg_unref(msg);
@@ -1161,6 +1338,10 @@ static int port_delay_req_msg_process(struct ptp_port *port, struct ptp_msg *msg
 	enum ptp_port_state state = ptp_port_state(port);
 	const struct ptp_default_ds *dds = ptp_clock_default_ds();
 
+	if (port_offload_response_owned(port, msg)) {
+		return 0;
+	}
+
 	if (port->port_ds.delay_mechanism != PTP_DM_E2E) {
 		return 0;
 	}
@@ -1284,6 +1465,9 @@ static int port_pdelay_req_msg_process(struct ptp_port *port, struct ptp_msg *ms
 	if (!port_pdelay_active(port)) {
 		return 0;
 	}
+	if (port_offload_response_owned(port, msg)) {
+		return 0;
+	}
 
 	if (!msg->rx_timestamp_valid || port_timestamp_is_missing(&msg->timestamp.host)) {
 		LOG_WRN("Port %d drops Pdelay_Req without valid RX timestamp",
@@ -1313,11 +1497,19 @@ static int port_pdelay_req_msg_process(struct ptp_port *port, struct ptp_msg *ms
 	resp->pdelay_resp.req_receipt_timestamp.nanoseconds = msg->timestamp.host.nanosecond;
 	resp->pdelay_resp.req_port_id = msg->header.src_port_id;
 
-	net_if_register_timestamp_cb(&port->pdelay_resp_ts_cb, NULL, port->iface,
-				     port_pdelay_resp_timestamp_cb);
+	if (port_offload_enabled(port, ETHERNET_PTP_ONE_STEP_PDELAY_RESP) &&
+	    msg->timestamp.host.second <= UINT32_MAX) {
+		resp->header.flags[0] &= ~PTP_MSG_TWO_STEP_FLAG;
+		memset(&resp->pdelay_resp.req_receipt_timestamp, 0,
+		       sizeof(resp->pdelay_resp.req_receipt_timestamp));
+		port_offload_tx(port, resp, &msg->timestamp.host);
+	} else {
+		net_if_register_timestamp_cb(&port->pdelay_resp_ts_cb, NULL, port->iface,
+					     port_pdelay_resp_timestamp_cb);
 
-	port->last_pdelay_req_received = msg;
-	ptp_msg_ref(msg);
+		port->last_pdelay_req_received = msg;
+		ptp_msg_ref(msg);
+	}
 
 	ret = port_msg_send(port, resp, PTP_SOCKET_EVENT);
 	ptp_msg_unref(resp);
@@ -1357,13 +1549,6 @@ static bool port_pdelay_msg_matches_request(struct ptp_port *port, struct ptp_ms
 static void port_pdelay_resp_msg_process(struct ptp_port *port, struct ptp_msg *msg)
 {
 	if (!port_pdelay_msg_matches_request(port, msg, &msg->pdelay_resp.req_port_id)) {
-		return;
-	}
-
-	if ((msg->header.flags[0] & PTP_MSG_TWO_STEP_FLAG) == 0U) {
-		LOG_WRN("Port %d rejects one-step Pdelay_Resp sequence %u",
-			port->port_ds.id.port_number, msg->header.sequence_id);
-		port_pdelay_clear_request_exchange(port);
 		return;
 	}
 
@@ -1671,6 +1856,9 @@ static bool port_is_enabled(struct ptp_port *port)
 
 static void port_disable(struct ptp_port *port)
 {
+	if (port_offload_refresh(port, true) != 0) {
+		LOG_ERR("Failed to disable PTP packet offload");
+	}
 	k_timer_stop(&port->timers.announce);
 	k_timer_stop(&port->timers.delay);
 	k_timer_stop(&port->timers.sync);
@@ -1921,6 +2109,12 @@ enum ptp_port_event ptp_port_event_gen(struct ptp_port *port, int idx)
 	}
 
 	ptp_msg_unref(msg);
+	/* Management and received messages can change the required wire template
+	 * without changing the port state (for example, domain or Sync interval).
+	 */
+	if (port_offload_refresh(port, false) != 0) {
+		return PTP_EVT_FAULT_DETECTED;
+	}
 	return event;
 }
 
@@ -1934,6 +2128,11 @@ void ptp_port_event_handle(struct ptp_port *port, enum ptp_port_event event, boo
 
 	if (!port_state_update(port, event, tt_diff)) {
 		/* No PTP Port state change */
+		return;
+	}
+	if (port_offload_refresh(port, false) != 0) {
+		port->port_ds.state = PTP_PS_FAULTY;
+		port_disable(port);
 		return;
 	}
 
@@ -2008,6 +2207,10 @@ enum ptp_port_event ptp_port_timer_event_gen(struct ptp_port *port, struct k_tim
 {
 	enum ptp_port_event event = PTP_EVT_NONE;
 	enum ptp_port_state state = ptp_port_state(port);
+
+	if (port_offload_refresh(port, false) != 0) {
+		return PTP_EVT_FAULT_DETECTED;
+	}
 
 	if (timer == &port->timers.pdelay &&
 	    atomic_test_bit(&port->timeouts, PTP_PORT_TIMER_PDELAY_TO)) {

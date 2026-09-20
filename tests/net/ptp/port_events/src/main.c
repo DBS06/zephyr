@@ -30,7 +30,12 @@ static struct ptp_msg scripted_timestamp_msg;
 static struct ptp_tlv_container fake_tlv_container;
 static uint8_t fake_added_tlv[sizeof(struct ptp_tlv_mgmt_err)];
 static struct net_if fake_iface;
-static const struct device fake_phc;
+int fake_ptp_clock_get(const struct device *dev, struct net_ptp_time *tm);
+
+static DEVICE_API(ptp_clock, fake_phc_api) = {
+	.get = fake_ptp_clock_get,
+};
+static const struct device fake_phc = {.api = &fake_phc_api};
 static uint32_t fake_random_value;
 static int random_get_calls;
 
@@ -263,6 +268,17 @@ int ptp_clock_pdelay(struct ptp_port *port, int64_t t1, int64_t t2, int64_t t3, 
 void ptp_clock_pollfd_invalidate(void)
 {
 	/* Test fakes do not own the clock pollfd set. */
+}
+
+int ptp_clock_pdelay_one_step(struct ptp_port *port, int64_t t1, int64_t t4,
+			      ptp_timeinterval correction)
+{
+	ARG_UNUSED(port);
+	clock_pdelay_calls++;
+	last_pdelay_t1 = t1;
+	last_pdelay_t4 = t4;
+	last_pdelay_correction_resp = correction;
+	return 0;
 }
 
 void ptp_clock_signal_timeout(void)
@@ -995,7 +1011,7 @@ ZTEST(ptp_port_events, test_event_gen_pdelay_rejects_multiple_responders)
 	stop_port_timers(&port);
 }
 
-ZTEST(ptp_port_events, test_event_gen_pdelay_rejects_one_step_and_stale_response)
+ZTEST(ptp_port_events, test_event_gen_pdelay_accepts_one_step_and_rejects_stale_response)
 {
 	struct ptp_port port;
 	struct ptp_msg req;
@@ -1028,9 +1044,66 @@ ZTEST(ptp_port_events, test_event_gen_pdelay_rejects_one_step_and_stale_response
 
 	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE,
 		      "one-step Pdelay_Resp should not change port event state");
-	zassert_equal(clock_pdelay_calls, 0, "one-step response should not update delay");
+	zassert_equal(clock_pdelay_calls, 1,
+		      "one-step response must update delay without Follow_Up");
+	zassert_equal(last_pdelay_t1, NSEC_PER_SEC + 100);
+	zassert_equal(last_pdelay_t4, NSEC_PER_SEC + 900);
 	zassert_is_null(port.last_pdelay_req_sent, "one-step response should clear request");
 	stop_port_timers(&port);
+}
+
+ZTEST(ptp_port_events, test_one_step_response_before_tx_timestamp)
+{
+	struct ptp_port port;
+
+	init_port(&port, PTP_PS_TIME_RECEIVER);
+	port.port_ds.delay_mechanism = PTP_DM_P2P;
+	atomic_set_bit(&port.timeouts, PTP_PORT_TIMER_PDELAY_TO);
+	zassert_equal(ptp_port_timer_event_gen(&port, &port.timers.pdelay), PTP_EVT_NONE);
+	stop_port_timers(&port);
+	init_timestamp_msg(PTP_MSG_PDELAY_REQ, &port, port.pdelay_req_sequence_id);
+	init_rx_msg(PTP_MSG_PDELAY_RESP, 0x90);
+	scripted_rx_msg.header.sequence_id = port.pdelay_req_sequence_id;
+	scripted_rx_msg.pdelay_resp.req_port_id = port.port_ds.id;
+	scripted_rx_msg.rx_timestamp_valid = true;
+	scripted_rx_msg.timestamp.host.second = 1;
+	scripted_rx_msg.timestamp.host.nanosecond = 900;
+	scripted_rx_msg.header.correction = 12345;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_equal(clock_pdelay_calls, 0);
+	fire_timestamp_cb(&port, 1, 100);
+	zassert_equal(clock_pdelay_calls, 1);
+	zassert_equal(last_pdelay_correction_resp, 12345);
+	zassert_is_null(port.last_pdelay_req_sent);
+}
+
+ZTEST(ptp_port_events, test_one_step_missing_timestamp_and_multiple_responders)
+{
+	struct ptp_port port;
+	struct ptp_msg req = {0};
+
+	init_port(&port, PTP_PS_TIME_RECEIVER);
+	port.port_ds.delay_mechanism = PTP_DM_P2P;
+	port.last_pdelay_req_sent = &req;
+	port.pdelay_req_sequence_id = 24;
+	init_rx_msg(PTP_MSG_PDELAY_RESP, 0x90);
+	scripted_rx_msg.header.sequence_id = 24;
+	scripted_rx_msg.pdelay_resp.req_port_id = port.port_ds.id;
+	scripted_rx_msg.timestamp.host.second = 1;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_equal(clock_pdelay_calls, 0);
+	zassert_is_null(port.last_pdelay_req_sent);
+
+	port.last_pdelay_req_sent = &req;
+	port.pdelay_req_sequence_id = 24;
+	scripted_rx_msg.rx_timestamp_valid = true;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_not_null(port.last_pdelay_resp);
+	/* A second peer responds while the local TX timestamp is still pending. */
+	scripted_rx_msg.header.src_port_id.clk_id.id[0]++;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_equal(clock_pdelay_calls, 0);
+	zassert_is_null(port.last_pdelay_req_sent);
 }
 
 ZTEST(ptp_port_events, test_event_gen_sync_follow_up_pair_synchronizes)
@@ -1625,5 +1698,84 @@ ZTEST(ptp_port_events, test_hybrid_send_failures_do_not_trigger_fallback)
 }
 
 #endif /* CONFIG_PTP_NETWORK_MODE_HYBRID */
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+ZTEST(ptp_port_events, test_one_step_sync_skips_follow_up_callback)
+{
+	struct ptp_port port;
+
+	init_port(&port, PTP_PS_TIME_TRANSMITTER);
+	port.offload.operations = ETHERNET_PTP_ONE_STEP_SYNC;
+	port.offload.generation = 5;
+	atomic_set_bit(&port.timeouts, PTP_PORT_TIMER_SYNC_TO);
+	zassert_equal(ptp_port_timer_event_gen(&port, &port.timers.sync), PTP_EVT_NONE);
+	zassert_equal(transport_send_calls, 1);
+	zassert_equal(last_tx_msg.header.flags[0] & PTP_MSG_TWO_STEP_FLAG, 0);
+	zassert_equal(last_tx_msg.offload.flags, NET_PTP_PACKET_ONE_STEP);
+	zassert_equal(last_tx_msg.offload.generation, 5);
+	zassert_equal(timestamp_register_calls, 0);
+	zassert_false(port.sync_fup_pending);
+	stop_port_timers(&port);
+}
+
+ZTEST(ptp_port_events, test_auto_sync_has_no_software_duplicate)
+{
+	struct ptp_port port;
+
+	init_port(&port, PTP_PS_TIME_TRANSMITTER);
+	port.offload.operations = ETHERNET_PTP_AUTO_SYNC;
+	atomic_set_bit(&port.timeouts, PTP_PORT_TIMER_SYNC_TO);
+	zassert_equal(ptp_port_timer_event_gen(&port, &port.timers.sync), PTP_EVT_NONE);
+	zassert_equal(transport_send_calls, 0);
+	zassert_equal(msg_alloc_calls, 0);
+	stop_port_timers(&port);
+}
+
+ZTEST(ptp_port_events, test_one_step_peer_response_carries_ingress)
+{
+	struct ptp_port port;
+
+	init_port(&port, PTP_PS_TIME_RECEIVER);
+	port.port_ds.delay_mechanism = PTP_DM_P2P;
+	port.offload.operations = ETHERNET_PTP_ONE_STEP_PDELAY_RESP;
+	port.offload.generation = 7;
+	init_rx_msg(PTP_MSG_PDELAY_REQ, 0x91);
+	scripted_rx_msg.rx_timestamp_valid = true;
+	scripted_rx_msg.timestamp.host.second = 19;
+	scripted_rx_msg.timestamp.host.nanosecond = 999999999;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_equal(transport_send_calls, 1);
+	zassert_equal(timestamp_register_calls, 0);
+	zassert_equal(last_tx_msg.offload.ingress_seconds, 19);
+	zassert_equal(last_tx_msg.offload.ingress_nanoseconds, 999999999);
+	zassert_equal(last_tx_msg.offload.generation, 7);
+	zassert_equal(last_tx_msg.header.flags[0] & PTP_MSG_TWO_STEP_FLAG, 0);
+	zassert_is_null(port.last_pdelay_req_received);
+	stop_port_timers(&port);
+}
+
+ZTEST(ptp_port_events, test_hardware_response_ownership_survives_mode_change)
+{
+	struct ptp_port port;
+
+	init_port(&port, PTP_PS_TIME_TRANSMITTER);
+	port.offload_response_metadata_required = true;
+	init_rx_msg(PTP_MSG_DELAY_REQ, 0x92);
+	scripted_rx_msg.rx_timestamp_valid = true;
+	scripted_rx_msg.timestamp.host.second = 1;
+	scripted_rx_msg.offload.flags = NET_PTP_PACKET_RX_VALID | NET_PTP_PACKET_RX_RESPONDED;
+	scripted_rx_msg.offload.generation = 1;
+	port.offload.generation = 2;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_equal(transport_send_calls, 0);
+	scripted_rx_msg.offload.flags = 0;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_equal(transport_send_calls, 0, "missing ownership must not cause a duplicate");
+	scripted_rx_msg.offload.flags = NET_PTP_PACKET_RX_VALID;
+	zassert_equal(ptp_port_event_gen(&port, PTP_SOCKET_EVENT), PTP_EVT_NONE);
+	zassert_equal(transport_send_calls, 1, "software-owned exchange must still be answered");
+	stop_port_timers(&port);
+}
+#endif
 
 ZTEST_SUITE(ptp_port_events, NULL, NULL, port_events_before, NULL, NULL);
