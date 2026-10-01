@@ -632,12 +632,12 @@ ZTEST(ptp_clock_wakeup, test_synchronize_resets_servo_after_rate_adjust_failure)
 	zassert_equal(ptp_clk.pi.integral, 0.0, "servo integral should be cleared");
 }
 
-ZTEST(ptp_clock_wakeup, test_synchronize_resets_after_consecutive_locked_outliers)
+ZTEST(ptp_clock_wakeup, test_synchronize_steps_persistent_offset_after_locked_outliers)
 {
 	const uint64_t ingress = NSEC_PER_SEC;
 	const int64_t delay = 100;
 	const int64_t locked_offset = 5LL * NSEC_PER_MSEC;
-	const int64_t reacquire_offset = 200LL * NSEC_PER_MSEC;
+	const int64_t persistent_offset = 200LL * NSEC_PER_MSEC;
 
 	ptp_clk.phc = DEVICE_GET(fake_phc);
 	ptp_clk.current_ds.mean_delay = (ptp_timeinterval)delay << 16;
@@ -651,27 +651,50 @@ ZTEST(ptp_clock_wakeup, test_synchronize_resets_after_consecutive_locked_outlier
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES,
 		      "stable samples should drive the PI controller");
 
-	ptp_clock_synchronize(ingress, ingress - delay - reacquire_offset, true);
+	ptp_clock_synchronize(ingress, ingress - delay - persistent_offset, true);
 
 	zassert_true(ptp_clk.sync_servo_locked, "one outlier should preserve servo lock");
 	zassert_equal(ptp_clk.sync_servo_outlier_samples, 1, "outlier should be counted");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES,
 		      "isolated outlier should not change the clock rate");
 
-	ptp_clock_synchronize(ingress, ingress - delay - reacquire_offset, true);
+	ptp_clock_synchronize(ingress, ingress - delay - persistent_offset, true);
 
 	zassert_false(ptp_clk.sync_servo_locked, "consecutive outliers should reset the servo");
 	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES + 1,
 		      "second outlier should only restore nominal rate");
 	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0,
 		      "servo reset should restore nominal rate");
+	zassert_equal(fake_ptp_clock_set_calls, 0, "outliers alone should not step the PHC");
 
-	ptp_clock_synchronize(ingress, ingress - delay - reacquire_offset, true);
+	ptp_clock_synchronize(ingress, ingress - delay - persistent_offset, true);
 
-	zassert_equal(fake_ptp_clock_rate_adjust_calls, SYNC_SERVO_LOCK_SAMPLES + 2,
-		      "persistent offset should restart PI acquisition");
-	zassert_not_equal(fake_ptp_clock_last_rate_ratio, 1.0,
-			  "reacquisition should apply a frequency correction");
+	zassert_equal(fake_ptp_clock_set_calls, 1,
+		      "persistent offset beyond the PI range should step the PHC");
+	zassert_equal(fake_ptp_clock_last_set_time.second, 0, "step seconds mismatch");
+	zassert_equal(fake_ptp_clock_last_set_time.nanosecond, NSEC_PER_SEC - persistent_offset,
+		      "step nanoseconds mismatch");
+	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0,
+		      "step should leave the PHC at nominal rate");
+}
+
+ZTEST(ptp_clock_wakeup, test_synchronize_steps_large_offset_while_unlocked)
+{
+	const uint64_t ingress = NSEC_PER_SEC;
+	const int64_t delay = 100;
+	const int64_t offset = -(SYNC_SERVO_OUTLIER_NS + 1);
+
+	ptp_clk.phc = DEVICE_GET(fake_phc);
+	ptp_clk.current_ds.mean_delay = (ptp_timeinterval)delay << 16;
+	fake_ptp_clock_time.second = 1;
+
+	ptp_clock_synchronize(ingress, ingress - delay - offset, true);
+
+	zassert_equal(fake_ptp_clock_set_calls, 1,
+		      "unlocked offset beyond the outlier bound should step the PHC");
+	zassert_equal(fake_ptp_clock_rate_adjust_calls, 1,
+		      "only the servo reset should reach the rate control");
+	zassert_equal(fake_ptp_clock_last_rate_ratio, 1.0, "step should use nominal rate");
 }
 
 ZTEST(ptp_clock_wakeup, test_synchronize_good_sample_clears_locked_outlier_count)
