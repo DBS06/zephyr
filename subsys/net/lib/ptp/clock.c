@@ -39,9 +39,13 @@ LOG_MODULE_REGISTER(ptp_clock, CONFIG_PTP_LOG_LEVEL);
 /*
  * Servo acquisition policy:
  * - offsets above the step threshold are corrected by setting the clock;
+ * - while unlocked, offsets above 100 ms are also corrected by setting the
+ *   clock, because the PI output for them exceeds typical PHC rate ranges and
+ *   a rejected rate adjustment would otherwise reset the servo indefinitely;
  * - three consecutive samples within 10 ms mark the frequency servo as locked;
  * - while locked, offsets above 100 ms are rejected, and two consecutive
- *   outliers reset the servo. The next sample starts acquisition again.
+ *   outliers reset the servo. A persistent offset is then stepped by the next
+ *   sample.
  *
  * Lock is based on samples rather than elapsed time, so acquisition time follows
  * the configured Sync interval. These thresholds protect the PI controller from
@@ -678,7 +682,7 @@ static __noinline void clock_step(const struct precision_clock *precision_clk,
 	precision_time_t target_time;
 	int ret;
 
-	LOG_WRN_RATELIMIT("Clock offset exceeds 1 second (t1=%" PRIu64 ".%09u t2=%" PRIu64
+	LOG_WRN_RATELIMIT("Clock offset exceeds servo range (t1=%" PRIu64 ".%09u t2=%" PRIu64
 			  ".%09u delay=%lldns offset=%lldns phc_now=%" PRIu64
 			  ".%09u |t2-phc|=%" PRIu64 "ns)",
 			  ptp_clk.timestamp.t1 / NSEC_PER_SEC,
@@ -800,9 +804,10 @@ static void clock_synchronize_with_delay(uint64_t ingress, uint64_t egress,
 
 	offset = (int64_t)(ptp_clk.timestamp.t2 - ptp_clk.timestamp.t1) - delay;
 
-	/* If diff is too big, ptp_clk needs to be set first. */
-	if (offset > SYNC_SERVO_STEP_THRESHOLD_NS ||
-	    offset < -SYNC_SERVO_STEP_THRESHOLD_NS) {
+	/* If diff is too big for the frequency servo, ptp_clk needs to be set first. */
+	if (offset > SYNC_SERVO_STEP_THRESHOLD_NS || offset < -SYNC_SERVO_STEP_THRESHOLD_NS ||
+	    (!ptp_clk.sync_servo_locked &&
+	     (offset > SYNC_SERVO_OUTLIER_NS || offset < -SYNC_SERVO_OUTLIER_NS))) {
 		clock_step(precision_clk, current_time, offset, delay, phc_now_ns);
 		return;
 	}
