@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "STM32 PTP offload tests"
+
+config TEST_STM32_TX_ASYNC
+	bool "Exercise asynchronous transmission"
+
+source "Kconfig.zephyr"

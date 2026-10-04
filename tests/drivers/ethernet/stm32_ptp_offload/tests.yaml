@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - ethernet
+    - ptp
+  platform_allow:
+    - native_sim/native/64
+  integration_platforms:
+    - native_sim/native/64
+tests:
+  drivers.ethernet.stm32_ptp_offload: {}
+  drivers.ethernet.stm32_ptp_offload.async:
+    extra_configs:
+      - CONFIG_TEST_STM32_TX_ASYNC=y
