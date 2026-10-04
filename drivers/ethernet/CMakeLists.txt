@@ -24,6 +24,7 @@ if(CONFIG_ETH_STM32_HAL)
     zephyr_library_sources_ifdef(CONFIG_ETH_STM32_HAL_API_V1 eth_stm32_hal_v1.c)
     zephyr_library_sources_ifdef(CONFIG_ETH_STM32_HAL_API_V2 eth_stm32_hal_v2.c)
     zephyr_library_sources_ifdef(CONFIG_PTP_CLOCK_STM32_HAL eth_stm32_hal_ptp.c)
+    zephyr_library_sources_ifdef(CONFIG_ETH_STM32_HAL_PTP_OFFLOAD eth_stm32_hal_ptp_offload.c)
   endif()
 endif()
 
