@@ -116,6 +116,12 @@ struct ptp_port {
 	int64_t pdelay_prev_resp_ingress_ns;
 	/** True if previous P2P rate-ratio timestamps are valid. */
 	bool pdelay_prev_rate_sample_valid;
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	/** Effective hardware packet operations and configuration generation. */
+	struct ethernet_ptp_config offload;
+	/** Retained across mode changes while old responses may still be queued. */
+	bool offload_response_metadata_required;
+#endif
 #if defined(CONFIG_PTP_NETWORK_MODE_HYBRID)
 	/** Protocol address of the current timeTransmitter used for unicast Delay_Req. */
 	struct net_sockaddr_storage tt_addr;
