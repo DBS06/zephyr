@@ -388,6 +388,10 @@ static int zpacket_insert_cmsg(struct net_msghdr *msg, int level, int type, cons
 	if (cmsg == NULL) {
 		return -EINVAL;
 	}
+	if (cmsg_space > msg->msg_controllen -
+			 ((uint8_t *)cmsg - (uint8_t *)msg->msg_control)) {
+		return -ENOMEM;
+	}
 
 	cmsg->cmsg_len = NET_CMSG_LEN(data_len);
 	cmsg->cmsg_level = level;
@@ -492,6 +496,13 @@ static void zpacket_recvmsg_set_control(struct net_context *ctx, struct net_pkt 
 		}
 	}
 
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	if (ctx->options.ptp_offload &&
+	    zpacket_insert_cmsg(msg, ZSOCK_SOL_SOCKET, ZSOCK_SCM_PTP_OFFLOAD, &pkt->ptp,
+				sizeof(pkt->ptp)) < 0) {
+		msg->msg_flags |= ZSOCK_MSG_CTRUNC;
+	}
+#endif
 	zpacket_update_msg_controllen(msg);
 }
 
@@ -588,6 +599,20 @@ int zpacket_getsockopt_ctx(struct net_context *ctx, int level, int optname,
 		errno = EINVAL;
 		return -1;
 	}
+
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	if (level == ZSOCK_SOL_SOCKET && optname == ZSOCK_SO_PTP_OFFLOAD) {
+		int enabled = ctx->options.ptp_offload;
+
+		if (*optlen < sizeof(enabled)) {
+			errno = EINVAL;
+			return -1;
+		}
+		memcpy(optval, &enabled, sizeof(enabled));
+		*optlen = sizeof(enabled);
+		return 0;
+	}
+#endif
 
 	return sock_fd_op_vtable.getsockopt(ctx, level, optname,
 					    optval, optlen);
@@ -905,6 +930,23 @@ static void mcast_membership_drop_all(struct net_context *ctx)
 int zpacket_setsockopt_ctx(struct net_context *ctx, int level, int optname,
 			   const void *optval, net_socklen_t optlen)
 {
+#if defined(CONFIG_NET_ETHERNET_PTP_OFFLOAD)
+	if (level == ZSOCK_SOL_SOCKET && optname == ZSOCK_SO_PTP_OFFLOAD) {
+		int enabled;
+
+		if (optval == NULL || optlen != sizeof(enabled)) {
+			errno = EINVAL;
+			return -1;
+		}
+		memcpy(&enabled, optval, sizeof(enabled));
+		if (enabled != 0 && enabled != 1) {
+			errno = EINVAL;
+			return -1;
+		}
+		ctx->options.ptp_offload = enabled != 0;
+		return 0;
+	}
+#endif
 #if defined(CONFIG_NET_SOCKETS_PACKET_MCAST_MEMBERSHIP)
 	if (level == ZSOCK_SOL_PACKET) {
 		return mcast_setsockopt(ctx, optname, optval, optlen);
